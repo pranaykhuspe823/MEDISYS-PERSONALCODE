@@ -21,6 +21,7 @@
 
   const STATUS_MAP = {
     waiting: "opd.status_waiting",
+    called: "opd.status_called",
     in_consultation: "opd.status_in_consultation",
     "in-consultation": "opd.status_in_consultation",
     completed: "opd.status_completed",
@@ -35,6 +36,7 @@
     }
     const fallbacks = {
       waiting: "Waiting",
+      called: "Called",
       in_consultation: "In Consultation",
       "in-consultation": "In Consultation",
       completed: "Completed",

@@ -2004,7 +2004,12 @@ app.get("/api/opd/visits/:id/meeting-room", requireTenantUser, async (req, res) 
 
 app.patch("/api/opd/visits/:id/status", requireRole("doctor", "hospital_admin"), async (req, res) => {
   const { status } = req.body || {};
-  if (!["waiting", "in-consultation", "completed"].includes(status)) {
+  // 'called' sits between waiting and in-consultation — a doctor clicking
+  // "Call" moves a patient here first (see staff/doctor-queue.js), and only
+  // clicking "Start Consulting" moves them to in-consultation. Both changes
+  // broadcast on the same "opd_queue" channel the live queue board (see
+  // staff/opd-queue-board.html / opd-queue-display.html) listens to.
+  if (!["waiting", "called", "in-consultation", "completed"].includes(status)) {
     return res.status(400).json({ success: false, message: "Invalid status." });
   }
   try {

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MEDISYS - Live Queue</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="../admin/admin.css" />
+<style>
+  /* Scoped to this page. */
+  .queue-board-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .queue-board-display-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+</style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="brand">
+      <img src="../logo.png" alt="Core5 MEDISYS" class="brand-logo" />
+    </div>
+    <div class="portal-header-right">
+      <span class="portal-user" id="portalUser"></span>
+      <button type="button" class="portal-logout-btn" id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <main class="portal-main">
+    <a href="dashboard.html" class="forgot-link portal-back-link" data-i18n="registration.back_to_dashboard">&larr; Back to Dashboard</a>
+
+    <div class="queue-board-header-row">
+      <div>
+        <h1 data-i18n="opd_queue.title">Live Queue</h1>
+        <p class="portal-subtitle" data-i18n="opd_queue.subtitle">Every token issued today, updating live as doctors call and consult patients.</p>
+      </div>
+      <a href="opd-queue-display.html" target="_blank" rel="noopener" class="login-btn queue-board-display-link" data-i18n="opd_queue.open_display_mode">
+        📺 Open Display Mode
+      </a>
+    </div>
+    <p class="wizard-hint" data-i18n="opd_queue.display_mode_hint">Display Mode opens a plain, TV-friendly token board with no menus — open it on a waiting-room screen and leave it running.</p>
+
+    <div class="portal-card">
+      <table class="portal-table" id="queueBoardTable">
+        <thead>
+          <tr>
+            <th data-i18n="opd.token">Token</th>
+            <th data-i18n="common.patient">Patient</th>
+            <th data-i18n="common.doctor">Doctor</th>
+            <th data-i18n="common.time">Time</th>
+            <th data-i18n="common.status">Status</th>
+          </tr>
+        </thead>
+        <tbody id="queueBoardTableBody"></tbody>
+      </table>
+      <p class="portal-empty" id="queueBoardEmptyState" hidden data-i18n="opd.no_visits_today">No visits yet today.</p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-left">
+      <span class="footer-brand">CORE5 <strong>MEDISYS</strong></span>
+      <small>HOSPITAL PORTAL</small>
+    </div>
+    <div class="footer-right">&copy;2026 Core5. All rights reserved.</div>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="../realtime-client.js"></script>
+  <script src="../portal-ui.js"></script>
+<script src="opd-queue-board.js"></script>
+</body>
+</html>
