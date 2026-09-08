@@ -30,7 +30,7 @@
     const data = await res.json();
 
     if (!data.user || !data.user.hospitalId || data.user.role === "hospital_admin" || data.user.role === "patient") {
-      window.location.href = "../index.html";
+      window.location.href = "../index";
       return null;
     }
 
@@ -41,7 +41,7 @@
   function wireLogout() {
     document.getElementById("logoutBtn").addEventListener("click", async () => {
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
-      window.location.href = "../index.html";
+      window.location.href = "../index";
     });
   }
 

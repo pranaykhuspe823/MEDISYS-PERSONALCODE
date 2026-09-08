@@ -1121,14 +1121,32 @@ function resolveBusinessRef(raw, refMap) {
 
 // Registers a just-committed row's real id/business-key under every CSV-local
 // identifier a LATER row in the same file might use to reference it: the
-// row's own 1-based position within its entity group (works even when the
-// file has no explicit id column), and, if the row's raw data has an "id"
+// row's own stable position within the WHOLE FILE (rowNum — works even when
+// the file has no explicit id column), and, if the row's raw data has an "id"
 // header, that literal value too (the more common real-world case for a
 // database-export-style CSV that already numbers its own rows). Both keys
 // point at the same real value, so either reference style resolves correctly.
-function registerCrossTierId(idMapsRuntime, mapKey, csvPositionCounter, rawData, realValue) {
+//
+// BUG FIXED 2026-09-08: this used to take a locally-scoped position counter
+// that RESTARTS AT 1 inside every commitEntityRows() call. A bucketed multi-
+// entity batch commits each staff role as its own separate call (a doctor
+// bucket, a pathology_staff bucket, a billing_staff bucket, ...), but every
+// one of them registers into the SAME shared "users" map on purpose (so a
+// later row can cross-reference any staff member regardless of role) — so
+// each bucket's low position numbers (1, 2, 3...) collided with and silently
+// overwrote an EARLIER bucket's identically-numbered entries for a
+// completely different person. Concretely: a doctor row correctly registered
+// key "1" as its own real user_id, then a later billing_staff bucket (whose
+// own first-and-only row is also "position 1" within ITS call) overwrote
+// that same key "1" with the billing clerk's id instead — so opd_visits rows
+// that referenced "doctor_user_id: 1" resolved to the wrong staff member
+// entirely, and that patient never showed up on the real doctor's "My
+// Patients" list. rowNum (the staging row's row_num — stable across the
+// whole batch, never reset between bucket calls) doesn't have this
+// collision, since no two rows in the same file ever share a row_num.
+function registerCrossTierId(idMapsRuntime, mapKey, rowNum, rawData, realValue) {
   const map = idMapsRuntime[mapKey] || (idMapsRuntime[mapKey] = new Map());
-  map.set(String(csvPositionCounter), realValue);
+  map.set(String(rowNum), realValue);
   const idHeader = Object.keys(rawData).find((h) => h.trim().toLowerCase() === "id");
   if (idHeader) {
     const rawId = rawData[idHeader];
@@ -1293,8 +1311,13 @@ async function commitEntityRows(db, hospitalId, userId, batch, entityName, entit
     // capture exactly what the row looked like right before this batch
     // touches it, so DELETE /api/import/:batchId can restore it exactly
     // instead of just guessing which fields this batch changed.
+    // hospitals is a master-only table now (see dbRouter.js) — reads/writes
+    // against it must go through masterPool, never the hospital-scoped
+    // `connection`, or they'd silently hit that hospital's own stale local
+    // copy of the table instead of the real one everything else (including
+    // the hospital admin's own Settings page) actually reads from.
     if (entityName === "hospitals") {
-      const [[beforeRow]] = await connection.query(`SELECT * FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
+      const [[beforeRow]] = await masterPool.query(`SELECT * FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
       await connection.query(`UPDATE import_batches SET pre_commit_snapshot = ? WHERE id = ?`, [
         JSON.stringify(beforeRow || {}),
         batch.id,
@@ -1307,7 +1330,7 @@ async function commitEntityRows(db, hospitalId, userId, batch, entityName, entit
     const departmentCache = new Map();
     let hospitalShortCode = null;
     if (entityDef.table === "users") {
-      const [[hospitalRow]] = await connection.query(`SELECT short_code FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
+      const [[hospitalRow]] = await masterPool.query(`SELECT short_code FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
       hospitalShortCode = hospitalRow?.short_code || "HOSP";
     }
 
@@ -1343,9 +1366,7 @@ async function commitEntityRows(db, hospitalId, userId, batch, entityName, entit
     // The "hospitals" entity is a singleton per admin — every row updates the
     // same record, so real-column values from later rows win on conflict and
     // extra_fields accumulate across rows via JSON_MERGE_PATCH.
-    let csvPositionCounter = 0;
     for (const stagingRow of stagingRows) {
-      csvPositionCounter++;
       const rawData = stagingRow.raw_data;
       const columnValues = {};
       const detailsValues = {};
@@ -1467,12 +1488,12 @@ async function commitEntityRows(db, hospitalId, userId, batch, entityName, entit
           if (uhidCollisionResolved) uhidCollisionsResolved++;
           if (doctorLinkResult === "created") doctorLinksCreated++;
           else if (doctorLinkResult === "unresolved") doctorLinksUnresolved++;
-          if (isMultiBatch) registerCrossTierId(idMapsRuntime, "patients", csvPositionCounter, rawData, insertedId);
+          if (isMultiBatch) registerCrossTierId(idMapsRuntime, "patients", stagingRow.row_num, rawData, insertedId);
         } else if (entityName === "hospitals") {
           await commitHospitalRow(connection, hospitalId, columnValues, extraFieldValues);
         } else if (isGeneric) {
           const insertedId = await commitGenericRow(connection, hospitalId, entityDef, columnValues, extraFieldValues, idMapsRuntime);
-          if (isMultiBatch) registerCrossTierId(idMapsRuntime, entityName, csvPositionCounter, rawData, insertedId);
+          if (isMultiBatch) registerCrossTierId(idMapsRuntime, entityName, stagingRow.row_num, rawData, insertedId);
         } else {
           const staffUserId = await commitStaffRow(connection, hospitalId, batch.id, entityName, hospitalShortCode, columnValues, detailsValues, specialValues, extraFieldValues, departmentCache);
           // Shared "users" key regardless of role — a doctor bucket and a
@@ -1480,7 +1501,7 @@ async function commitEntityRows(db, hospitalId, userId, batch, entityName, entit
           // the SAME map, since a downstream row's doctor_user_id and another
           // row's assigned_nurse_id both need to search across every staff
           // role this file created, not just one.
-          if (isMultiBatch) registerCrossTierId(idMapsRuntime, "users", csvPositionCounter, rawData, staffUserId);
+          if (isMultiBatch) registerCrossTierId(idMapsRuntime, "users", stagingRow.row_num, rawData, staffUserId);
         }
         await connection.query(`UPDATE import_staging_rows SET status = 'committed' WHERE id = ?`, [stagingRow.id]);
         committedCount++;
@@ -1742,13 +1763,22 @@ async function commitPatientRow(connection, hospitalId, userId, batchId, columnV
   }
 
   if (!uhid) {
-    const [[hospitalRow]] = await connection.query(`SELECT short_code FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
+    // hospitals is master-only — see the matching note earlier in this file.
+    const [[hospitalRow]] = await masterPool.query(`SELECT short_code FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
     uhid = generateUhid(hospitalRow?.short_code || "HOSP", result.insertId);
     await connection.query(`UPDATE patients SET uhid = ? WHERE id = ?`, [uhid, result.insertId]);
   }
   const insertedId = result.insertId;
 
-  await connection.query(`INSERT INTO user_directory (user_id, hospital_id, account_type) VALUES (?, ?, 'patient')`, [uhid, hospitalId]);
+  // SECURITY/CORRECTNESS: user_directory is a master-only table (routes a
+  // userId to the right hospital BEFORE any hospital context exists — see
+  // dbRouter.js) — must go through masterPool, never the hospital-scoped
+  // `connection`. Writing it to the hospital DB instead meant login's own
+  // directory lookup (which only ever reads from masterPool) could never
+  // find this person: the row silently existed in the wrong database. Real
+  // bug found 2026-09-08 — every imported patient/staff row was previously
+  // unable to log in, even right after their password was reset correctly.
+  await masterPool.query(`INSERT INTO user_directory (user_id, hospital_id, account_type) VALUES (?, ?, 'patient')`, [uhid, hospitalId]);
 
   // Links this patient to a real doctor via a genuine opd_visits record —
   // the same relationship a real OPD booking creates, which is what makes
@@ -1804,7 +1834,13 @@ async function commitHospitalRow(connection, hospitalId, columnValues, extraFiel
   if (setClauses.length === 0) return;
 
   params.push(hospitalId);
-  await connection.query(`UPDATE hospitals SET ${setClauses.join(", ")} WHERE id = ?`, params);
+  // hospitals is master-only — see the matching note earlier in this file.
+  // Writing this via the hospital-scoped `connection` would update that
+  // hospital's own stale local copy of the table, never the real row the
+  // rest of the app (including the hospital admin's own Settings page)
+  // actually reads from — the import would silently look like it "worked"
+  // while changing nothing anyone else could see.
+  await masterPool.query(`UPDATE hospitals SET ${setClauses.join(", ")} WHERE id = ?`, params);
 }
 
 // Mirrors POST /api/hospital/staff (the manual "Add Staff" form) exactly —
@@ -1873,7 +1909,9 @@ async function commitStaffRow(connection, hospitalId, batchId, role, hospitalSho
           batchId,
         ]
       );
-      await connection.query(`INSERT INTO user_directory (user_id, hospital_id) VALUES (?, ?)`, [staffUserId, hospitalId]);
+      // See the matching note on the patient user_directory insert above —
+      // same bug, same fix: this must go through masterPool, not `connection`.
+      await masterPool.query(`INSERT INTO user_directory (user_id, hospital_id) VALUES (?, ?)`, [staffUserId, hospitalId]);
       return staffUserId;
     } catch (err) {
       if (err.code === "ER_DUP_ENTRY" && attempt < 2) {
@@ -2032,7 +2070,12 @@ router.delete("/:batchId", requireHospitalAdmin, async (req, res) => {
       setClauses.push("extra_fields = ?");
       params.push(snapshot.extra_fields ? JSON.stringify(snapshot.extra_fields) : null);
       params.push(hospitalId);
-      await connection.query(`UPDATE hospitals SET ${setClauses.join(", ")} WHERE id = ?`, params);
+      // hospitals is master-only — see the matching note earlier in this
+      // file. Note this necessarily runs outside the enclosing hospital-DB
+      // transaction below (a real, unavoidable property of hospitals now
+      // living in a physically separate database — the same tradeoff
+      // already accepted for medisys_pharmacy elsewhere in this app).
+      await masterPool.query(`UPDATE hospitals SET ${setClauses.join(", ")} WHERE id = ?`, params);
 
       await connection.query(`UPDATE import_batches SET reverted_at = NOW(), reverted_by = ? WHERE id = ?`, [userId, batch.id]);
       await connection.commit();
@@ -2179,7 +2222,8 @@ router.delete("/:batchId", requireHospitalAdmin, async (req, res) => {
           setClauses.push("extra_fields = ?");
           params.push(snapshot.extra_fields ? JSON.stringify(snapshot.extra_fields) : null);
           params.push(hospitalId);
-          await connection.query(`UPDATE hospitals SET ${setClauses.join(", ")} WHERE id = ?`, params);
+          // hospitals is master-only — see the matching note earlier in this file.
+          await masterPool.query(`UPDATE hospitals SET ${setClauses.join(", ")} WHERE id = ?`, params);
           hospitalsRestored = true;
         }
       }

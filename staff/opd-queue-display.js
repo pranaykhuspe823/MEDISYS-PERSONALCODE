@@ -17,7 +17,7 @@
     const res = await fetch("/api/session", { credentials: "same-origin" });
     const data = await res.json();
     if (!data.user || !data.user.hospitalId) {
-      window.location.href = "../index.html";
+      window.location.href = "../index";
       return null;
     }
     if (data.user.hospitalName) {

@@ -48,7 +48,7 @@
     const data = await res.json();
 
     if (!data.user || data.user.role !== "superadmin") {
-      window.location.href = "../index.html";
+      window.location.href = "../index";
       return null;
     }
 
@@ -64,7 +64,7 @@
     if (!logoutBtn) return;
     logoutBtn.addEventListener("click", async () => {
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
-      window.location.href = "../index.html";
+      window.location.href = "../index";
     });
   }
 
@@ -246,7 +246,7 @@
 
     document.getElementById("deleteHospitalBtn").addEventListener("click", async () => {
       const deleted = await deleteHospital(h.id, h.name);
-      if (deleted) window.location.href = "dashboard.html";
+      if (deleted) window.location.href = "dashboard";
     });
   }
 

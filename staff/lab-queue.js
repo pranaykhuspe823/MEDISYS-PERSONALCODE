@@ -20,7 +20,7 @@
     // only mutation endpoints still enforce pathology_staff server-side, so
     // an admin viewing this page can't silently act as the technician.
     if (!data.user || (data.user.role !== "pathology_staff" && data.user.role !== "hospital_admin")) {
-      window.location.href = "../index.html";
+      window.location.href = "../index";
       return null;
     }
     document.getElementById("portalUser").textContent = data.user.fullName || data.user.userId;
@@ -30,7 +30,7 @@
   function wireLogout() {
     document.getElementById("logoutBtn").addEventListener("click", async () => {
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
-      window.location.href = "../index.html";
+      window.location.href = "../index";
     });
   }
 

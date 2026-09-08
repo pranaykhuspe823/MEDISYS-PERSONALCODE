@@ -18,7 +18,7 @@
     const res = await fetch("/api/session", { credentials: "same-origin" });
     const data = await res.json();
     if (!data.user || data.user.role !== "nurse") {
-      window.location.href = "../index.html";
+      window.location.href = "../index";
       return null;
     }
     document.getElementById("portalUser").textContent = data.user.fullName || data.user.userId;
@@ -28,7 +28,7 @@
   function wireLogout() {
     document.getElementById("logoutBtn").addEventListener("click", async () => {
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
-      window.location.href = "../index.html";
+      window.location.href = "../index";
     });
   }
 

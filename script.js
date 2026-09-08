@@ -73,18 +73,18 @@
 
       if (data.success) {
         if (data.user.role === "superadmin") {
-          window.location.href = "/admin/dashboard.html";
+          window.location.href = "/admin/dashboard";
           return;
         }
         if (data.user.role === "hospital_admin") {
-          window.location.href = "/hospital/dashboard.html";
+          window.location.href = "/hospital/dashboard";
           return;
         }
         if (data.user.role === "patient") {
-          window.location.href = "/patient/dashboard.html";
+          window.location.href = "/patient/dashboard";
           return;
         }
-        window.location.href = "/staff/dashboard.html";
+        window.location.href = "/staff/dashboard";
         return;
       } else {
         formError.textContent = data.message || (window.i18n ? window.i18n.t("login.error_credentials") : "Invalid User ID or password.");

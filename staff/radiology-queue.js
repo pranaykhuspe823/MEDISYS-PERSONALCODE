@@ -87,7 +87,7 @@ async function guardSession() {
   // only mutation endpoints still enforce pathology_staff server-side, so an
   // admin viewing this page can't silently act as the technician.
   if (!data.user || (data.user.role !== "pathology_staff" && data.user.role !== "hospital_admin")) {
-    window.location.href = "../index.html";
+    window.location.href = "../index";
     return null;
   }
   currentUser = data.user;
@@ -97,7 +97,7 @@ async function guardSession() {
 function wireLogout() {
   document.getElementById("logoutBtn").addEventListener("click", async () => {
     await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
-    window.location.href = "../index.html";
+    window.location.href = "../index";
   });
 }
 
@@ -108,7 +108,7 @@ async function loadProfile() {
   const { fullName, hospitalName: hName, details } = data.profile;
   if (!details || details.designation !== "Radiologist") {
     // Not a radiologist — send pathology/lab staff to the plain queue instead.
-    window.location.href = "lab-queue.html";
+    window.location.href = "lab-queue";
     return false;
   }
   hospitalName = hName;

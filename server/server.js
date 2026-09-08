@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
 const multer = require("multer");
@@ -30,6 +32,19 @@ const { getEntity: getImportEntity } = require("./schemaRegistry");
 const UPLOADS_DIR = path.join(__dirname, "uploads", "lab-results");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
+// SECURITY: the client-supplied filename/Content-Type on a multipart upload
+// are just attacker-controlled strings — fileFilter below is a first,
+// cheap-but-spoofable screen. verifyUploadedFile() (further down) is the
+// real gate: it reads the file's actual first bytes on disk after multer
+// writes it and only keeps files whose real binary signature matches an
+// allowed type, deleting anything else before any route handler acts on it.
+const SAFE_IMAGE_MIME = /^image\/(png|jpe?g|gif|webp)$/;
+// Deliberately excludes image/svg+xml even though it matches /^image\//:
+// an SVG is XML text, not a fixed binary format, so it has no signature to
+// verify — and browsers execute a <script> embedded inside an inline-
+// rendered SVG, making "any declared image/*" a real stored-XSS vector via
+// this exact upload path if left unrestricted.
+
 const labResultUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
@@ -39,6 +54,7 @@ const labResultUpload = multer({
     },
   }),
   limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, SAFE_IMAGE_MIME.test(file.mimetype) || file.mimetype === "application/pdf"),
 });
 
 const LAB_IMAGES_DIR = path.join(__dirname, "uploads", "lab-images");
@@ -53,7 +69,7 @@ const labImageUpload = multer({
     },
   }),
   limits: { fileSize: 20 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
+  fileFilter: (req, file, cb) => cb(null, SAFE_IMAGE_MIME.test(file.mimetype)),
 });
 
 // Voice dictation clips (doctor consult/rounds) are forwarded to the local
@@ -77,9 +93,63 @@ const logoUpload = multer({
     },
   }),
   limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
+  fileFilter: (req, file, cb) => cb(null, SAFE_IMAGE_MIME.test(file.mimetype)),
 });
 const VOICE_SERVICE_URL = process.env.VOICE_SERVICE_URL || "http://127.0.0.1:8500";
+
+// Known binary signatures for the file types this app actually accepts.
+// Checked against the file's real bytes on disk, not the client-supplied
+// filename or Content-Type — either of those can claim anything regardless
+// of what was actually uploaded.
+const FILE_SIGNATURES = {
+  png: [0x89, 0x50, 0x4e, 0x47],
+  jpeg: [0xff, 0xd8, 0xff],
+  gif: [0x47, 0x49, 0x46, 0x38],
+  pdf: [0x25, 0x50, 0x44, 0x46],
+};
+
+function detectFileType(buffer) {
+  for (const [type, sig] of Object.entries(FILE_SIGNATURES)) {
+    if (sig.every((byte, i) => buffer[i] === byte)) return type;
+  }
+  // WEBP: "RIFF" .... "WEBP" — the 4-byte size field at offset 4-7 varies
+  // per file, so it's skipped rather than matched.
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) {
+    return "webp";
+  }
+  return null;
+}
+
+// Reads a just-uploaded file's real first bytes and confirms they match one
+// of allowedTypes; deletes the file and responds 400 if not. Call this as
+// the very first thing in a route handler, right after multer's upload
+// middleware — before any DB write or other use of req.file(s). Returns
+// true if the file passed (caller should continue), false if it was
+// rejected (caller should return immediately without doing anything else).
+function verifyUploadedFile(filePath, allowedTypes, res) {
+  let buffer;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    buffer = Buffer.alloc(16);
+    fs.readSync(fd, buffer, 0, 16, 0);
+    fs.closeSync(fd);
+  } catch (err) {
+    fs.unlink(filePath, () => {});
+    res.status(400).json({ success: false, message: "Could not read the uploaded file." });
+    return false;
+  }
+  const detected = detectFileType(buffer);
+  if (!detected || !allowedTypes.includes(detected)) {
+    fs.unlink(filePath, () => {});
+    res.status(400).json({ success: false, message: "That file doesn't look like a valid " + allowedTypes.join("/") + " file." });
+    return false;
+  }
+  return true;
+}
 
 // Server-local "today" as YYYY-MM-DD using local wall-clock fields (NOT
 // toISOString/UTC — that rolls back a day for ~5.5 hours overnight in IST and any
@@ -277,8 +347,76 @@ async function verifyPaymentOrder(req, hospitalId, resourceType, resourceId, raz
 }
 
 const app = express();
+
+// Security headers (helmet sets X-Content-Type-Options, X-Frame-Options,
+// removes X-Powered-By, and more, in one call). CSP is hand-configured
+// rather than left at helmet's default because this app genuinely depends
+// on a handful of external origins — Razorpay checkout, Jitsi video calls,
+// Google Fonts, and the jsPDF CDN script a few pages load — and helmet's
+// default would silently break every one of them. script-src has no
+// 'unsafe-inline': confirmed (grepped) there are zero inline <script>
+// blocks or on* handler attributes anywhere in this app, so this is a real
+// restriction, not security theater. style-src does allow 'unsafe-inline'
+// — inline style="" attributes are used across ~24 files and a full
+// refactor to remove them isn't worth doing for a much weaker attack
+// primitive than inline script.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://checkout.razorpay.com", "https://cdnjs.cloudflare.com", "https://meet.jit.si"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "blob:"],
+        connectSrc: ["'self'", "https://meet.jit.si", "wss://meet.jit.si", "https://checkout.razorpay.com", "https://api.razorpay.com"],
+        frameSrc: ["https://meet.jit.si", "https://api.razorpay.com", "https://checkout.razorpay.com"],
+        objectSrc: ["'none'"],
+      },
+    },
+    // Telemedicine embeds meet.jit.si in an iframe — helmet's default
+    // cross-origin policies are built for a single-origin app and block
+    // that kind of embed by default.
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
+    // This app never embeds its own pages in an iframe anywhere — DENY
+    // outright (stronger than helmet's SAMEORIGIN default) is safe and
+    // blocks clickjacking attempts completely.
+    frameguard: { action: "deny" },
+  })
+);
+
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+
+// Per-IP rate limiting — a second, independent layer from the per-account
+// lockout on /api/login below. That lockout catches many guesses against
+// ONE account; this catches one attacker guessing across MANY accounts
+// from the same IP, which per-account tracking alone never would.
+// /api/forgot-password gets the strictest limit of all: it resets a
+// password from just a User ID with no identity verification (a
+// deliberately accepted product tradeoff made earlier, not something this
+// change revisits) — rate limiting is the only real abuse control it has.
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false });
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many login attempts from this network. Please try again later." } });
+const forgotPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many password reset attempts from this network. Please try again later." } });
+app.use("/api", apiLimiter);
+// Every /api/* response can contain PHI (patient records, prescriptions,
+// billing, etc.) — never let a browser or intermediate proxy cache it.
+// Static assets (CSS/JS/images, served separately below) are unaffected.
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+// So express-session's cookie: { secure: 'auto' } below correctly detects
+// HTTPS from the X-Forwarded-Proto header if this is ever run behind a
+// reverse proxy (nginx, a load balancer, etc.) terminating TLS — without
+// this, Express only sees the proxy's internal HTTP connection and would
+// never send the Secure flag even in a fully HTTPS deployment. Harmless
+// no-op for the current direct/local setup with no proxy in front.
+app.set("trust proxy", 1);
+
 // Named so the same instance can be reused to authenticate the Socket.IO
 // handshake (see initRealtime below) — a second session({...}) call would
 // create a disconnected in-memory store and never find the cookie's session.
@@ -289,6 +427,21 @@ const sessionMiddleware = session({
   cookie: {
     httpOnly: true,
     maxAge: 8 * 60 * 60 * 1000,
+    // 'auto' sends Secure only when the request is actually HTTPS — set
+    // unconditionally to true, this would break every login on today's
+    // plain-HTTP setup (browsers silently refuse to store or send a
+    // Secure cookie over HTTP), while never setting it at all leaves the
+    // session cookie sendable over an accidental plain-HTTP connection
+    // even once this app is behind real TLS. 'auto' is the one setting
+    // that's correct in both states without needing to change later.
+    secure: "auto",
+    // Blocks the classic CSRF vector (a cross-site page silently POSTing
+    // to this app using the browser's already-stored session cookie) —
+    // 'strict' rather than the more common 'lax' because nothing in this
+    // app relies on the session cookie arriving on a cross-site top-level
+    // navigation (Razorpay checkout and the WebAuthn ceremony both happen
+    // in-page, not via a redirect back into the app).
+    sameSite: "strict",
   },
 });
 app.use(sessionMiddleware);
@@ -296,7 +449,68 @@ app.use(sessionMiddleware);
 // SQL dumps with password hashes, and uploaded patient files) — only the frontend
 // folders (html/css/js/images at the repo root) are meant to be publicly reachable.
 app.use(["/server", "/database"], (req, res) => res.status(404).end());
-app.use(express.static(path.join(__dirname, "..")));
+
+// Clean URLs: /staff/dashboard serves the exact same page as
+// /staff/dashboard.html — WITHOUT a redirect, so the address bar always
+// keeps whatever it already shows and never changes underneath the user.
+// Both forms keep working side by side (this middleware only adds the
+// extension-less form; express.static right below still serves the plain
+// .html files exactly as before), so an existing bookmark to the old
+// *.html URL is unaffected. Every internal link/redirect in the app has
+// been updated to use the clean form — see portal-ui.js and each page's
+// own .js file.
+//
+// SECURITY — path traversal: this takes a fragment straight out of the
+// URL and turns it into a filesystem path, which is exactly the shape of
+// a classic path-traversal bug (e.g. GET /..%2f..%2fserver/.env) if done
+// carelessly. Guarded three ways:
+//   1. The route pattern is an ALLOWLIST, not a blocklist — only the
+//      handful of real top-level folders this app actually serves pages
+//      from, each restricted to plain [a-zA-Z0-9-_] segments. A `.` isn't
+//      a legal character in the match at all, so "..", encoded or not,
+//      can never match this route in the first place — Express decodes
+//      req.path before route matching, so an encoded traversal attempt
+//      arrives here exactly as "..", already rejected by the same rule.
+//   2. Even so, the resolved path is re-verified with path.normalize +
+//      an explicit prefix check against APP_ROOT before ever touching
+//      the filesystem — defense in depth in case of any regex mistake.
+//   3. fs.stat must find a real, existing *file* (not a directory, not a
+//      symlink target elsewhere) before anything is served; anything
+//      else falls through to the normal 404 behavior below.
+const APP_ROOT = path.join(__dirname, "..");
+app.get(/^\/(admin|hospital|patient|staff)\/[a-zA-Z0-9\-_]+$|^\/[a-zA-Z0-9\-_]*$/, (req, res, next) => {
+  const candidate = path.normalize(path.join(APP_ROOT, req.path + ".html"));
+  if (candidate !== APP_ROOT && !candidate.startsWith(APP_ROOT + path.sep)) {
+    return next(); // never happens given the route pattern above, but checked anyway
+  }
+  fs.stat(candidate, (err, stats) => {
+    if (err || !stats.isFile()) return next();
+    // SECURITY: no-store here is what actually matters — see the matching
+    // note on the express.static config below for why.
+    res.set("Cache-Control", "no-store");
+    res.sendFile(candidate);
+  });
+});
+
+// SECURITY — stale portal page after logout via browser back/forward:
+// a browser's back-forward cache (bfcache) snapshots the entire rendered
+// page — DOM, JS state, everything — for instant back/forward navigation,
+// including a two-finger trackpad swipe. Restoring from bfcache does NOT
+// re-run the page's DOMContentLoaded handler (that's exactly what every
+// page's guardSession() runs on), so a page that was showing a logged-in
+// portal before logout can reappear fully intact on swiping back, with no
+// session check ever re-firing. Every browser stops using bfcache for a
+// page whose response carried Cache-Control: no-store, which forces a
+// real fresh navigation (and therefore a real guardSession() run) instead.
+// Scoped to .html responses only — CSS/JS/images aren't sensitive and
+// should keep their normal caching for performance.
+app.use(
+  express.static(path.join(__dirname, ".."), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html")) res.set("Cache-Control", "no-store");
+    },
+  })
+);
 // CSV/XLSX data import pipeline (hospital admin only) — see server/importRoutes.js.
 app.use("/api/import", importRoutes);
 
@@ -429,12 +643,58 @@ function requireRole(...roles) {
   };
 }
 
-app.post("/api/login", async (req, res) => {
+// Per-account login lockout with exponential backoff. Keyed by the
+// attempted userId, not IP — an attacker rotating IPs (or a shared
+// hospital NAT where legitimate staff share an IP with someone mistyping
+// their password) doesn't bypass or trigger this either way. In-memory,
+// consistent with this app's session store: resets on a server restart,
+// doesn't share state across multiple processes — fine for this app's
+// single-process deployment, same tradeoff already accepted elsewhere.
+const loginAttempts = new Map(); // userId -> { failures, lockedUntil }
+const LOGIN_LOCKOUT_THRESHOLD = 3; // first few failures are free — typos happen
+const LOGIN_LOCKOUT_BASE_MS = 2000; // doubles per failure past the threshold
+const LOGIN_LOCKOUT_MAX_MS = 15 * 60 * 1000; // capped at 15 minutes
+
+function checkLoginLockout(userId) {
+  const entry = loginAttempts.get(userId);
+  if (!entry || !entry.lockedUntil || Date.now() >= entry.lockedUntil) return null;
+  return Math.ceil((entry.lockedUntil - Date.now()) / 1000);
+}
+
+function recordLoginFailure(userId) {
+  const entry = loginAttempts.get(userId) || { failures: 0, lockedUntil: 0 };
+  entry.failures += 1;
+  if (entry.failures > LOGIN_LOCKOUT_THRESHOLD) {
+    const delay = Math.min(LOGIN_LOCKOUT_BASE_MS * 2 ** (entry.failures - LOGIN_LOCKOUT_THRESHOLD - 1), LOGIN_LOCKOUT_MAX_MS);
+    entry.lockedUntil = Date.now() + delay;
+  }
+  loginAttempts.set(userId, entry);
+}
+
+app.post("/api/login", loginLimiter, async (req, res) => {
   const { userId, password } = req.body || {};
 
   if (!userId || !password) {
     return res.status(400).json({ success: false, message: "User ID and password are required." });
   }
+
+  const lockoutSeconds = checkLoginLockout(userId);
+  if (lockoutSeconds) {
+    return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${lockoutSeconds}s.` });
+  }
+
+  // Every branch below (patient / staff / superadmin) ends by calling
+  // res.json — wrapping it here records the outcome against the lockout
+  // above without touching that branching logic itself.
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (body && body.success) {
+      loginAttempts.delete(userId);
+    } else if (res.statusCode === 401) {
+      recordLoginFailure(userId);
+    }
+    return originalJson(body);
+  };
 
   try {
     // Login is inherently pre-hospital-context — the only way to find out
@@ -561,7 +821,7 @@ app.post("/api/logout", (req, res) => {
 // account's password_hash. No prior password or extra verification is required by
 // design, so anyone who knows/guesses a valid User ID can reset it — see README/
 // commit notes before relying on this for real patient data.
-app.post("/api/forgot-password", async (req, res) => {
+app.post("/api/forgot-password", forgotPasswordLimiter, async (req, res) => {
   const { userId, newPassword } = req.body || {};
 
   if (!userId || !newPassword) {
@@ -621,7 +881,11 @@ app.get("/api/session", (req, res) => {
 
 app.get("/api/hospitals", requireSuperadmin, async (req, res) => {
   try {
-    const [rows] = await req.db.query(
+    // req.db is never set on a superadmin route (no hospital session to
+    // resolve a pool from) — hospitals is master-only regardless. Real bug
+    // found 2026-09-08: this crashed the entire superadmin dashboard's
+    // hospital list with req.db being undefined.
+    const [rows] = await masterPool.query(
       `SELECT id, name, city, state, bed_count, status, admin_name, admin_email, short_code, admin_user_id, created_at
        FROM hospitals ORDER BY created_at DESC`
     );
@@ -634,7 +898,8 @@ app.get("/api/hospitals", requireSuperadmin, async (req, res) => {
 
 app.get("/api/hospitals/:id", requireSuperadmin, async (req, res) => {
   try {
-    const [rows] = await req.db.query(
+    // Same fix as GET /api/hospitals above — req.db is never set here.
+    const [rows] = await masterPool.query(
       `SELECT id, name, license_number, pan, hfr_id, address, city, state, pincode,
               bed_count, opd_volume, admin_name, admin_email, modules, dpdp_consent,
               status, short_code, admin_user_id, created_at
@@ -1267,6 +1532,7 @@ app.post("/api/hospital/logo", requireHospitalAdmin, logoUpload.single("logo"), 
   if (!req.file) {
     return res.status(400).json({ success: false, message: "Choose an image file to upload." });
   }
+  if (!verifyUploadedFile(req.file.path, ["png", "jpeg", "gif", "webp"], res)) return;
   try {
     const { hospitalId } = req.session.user;
     const [[existing]] = await masterPool.query(`SELECT logo_path FROM hospitals WHERE id = ? LIMIT 1`, [hospitalId]);
@@ -2885,6 +3151,9 @@ app.post(
   labResultUpload.single("file"),
   async (req, res) => {
     const { resultNotes } = req.body || {};
+    // A result file is optional here (notes alone can complete an order) —
+    // only verify content when one was actually attached.
+    if (req.file && !verifyUploadedFile(req.file.path, ["png", "jpeg", "gif", "webp", "pdf"], res)) return;
     try {
       const { hospitalId, userId } = req.session.user;
       const [result] = await req.db.query(
@@ -3108,6 +3377,13 @@ app.post(
       const files = req.files || [];
       if (files.length === 0) {
         return res.status(400).json({ success: false, message: "No image files were uploaded." });
+      }
+      // All-or-nothing: if any file in the batch doesn't check out, reject
+      // the whole upload rather than silently keeping only the valid ones.
+      const invalidFile = files.find((f) => !verifyUploadedFile(f.path, ["png", "jpeg", "gif", "webp"], res));
+      if (invalidFile) {
+        files.filter((f) => f !== invalidFile).forEach((f) => fs.unlink(f.path, () => {}));
+        return;
       }
       const values = files.map((f) => [hospitalId, req.params.id, f.filename, f.originalname, userId]);
       await req.db.query(
@@ -3457,8 +3733,21 @@ app.post("/api/pharmacy-invoices/generate", requireTenantUser, async (req, res) 
 });
 
 // The medicine-level line items behind one invoice — what the printed bill itemizes.
+// SECURITY: previously queried pharmacy_orders by invoice_id alone, with no
+// hospital check — any logged-in staff member at ANY hospital could read
+// another hospital's prescriptions/dosages just by incrementing the id.
+// Fixed by confirming the invoice belongs to the caller's hospital first,
+// matching the same "id AND hospital_id" pattern every sibling route below
+// (/pay, /create-order, /verify-payment) already uses.
 app.get("/api/pharmacy-invoices/:id/items", requireTenantUser, async (req, res) => {
   try {
+    const [[invoice]] = await req.db.query(
+      `SELECT id FROM medisys_pharmacy.pharmacy_invoices WHERE id = ? AND hospital_id = ? LIMIT 1`,
+      [req.params.id, req.session.user.hospitalId]
+    );
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: "Invoice not found." });
+    }
     const [items] = await req.db.query(
       `SELECT id, medicine_name, dosage, duration, urgency, amount, doctor_user_id, dispensed_at
        FROM medisys_pharmacy.pharmacy_orders WHERE invoice_id = ? ORDER BY id ASC`,
@@ -4538,7 +4827,10 @@ app.post("/api/hospitals", requireSuperadmin, async (req, res) => {
   }
 
   try {
-    const [existing] = await req.db.query(
+    // req.db is undefined here (requireSuperadmin never sets it) — hospitals
+    // and user_directory are both master-only regardless. Real bug found
+    // 2026-09-08: all three queries below crashed onboarding immediately.
+    const [existing] = await masterPool.query(
       `SELECT id FROM hospitals
        WHERE LOWER(name) = LOWER(?) AND LOWER(COALESCE(city, '')) = LOWER(COALESCE(?, ''))
        LIMIT 1`,
@@ -4553,7 +4845,7 @@ app.post("/api/hospitals", requireSuperadmin, async (req, res) => {
     }
 
     if (customAdminUserId) {
-      const [takenRows] = await req.db.query("SELECT user_id FROM user_directory WHERE user_id = ?", [
+      const [takenRows] = await masterPool.query("SELECT user_id FROM user_directory WHERE user_id = ?", [
         customAdminUserId,
       ]);
       if (takenRows.length > 0) {
@@ -4564,7 +4856,7 @@ app.post("/api/hospitals", requireSuperadmin, async (req, res) => {
       }
     }
 
-    const [result] = await req.db.query(
+    const [result] = await masterPool.query(
       `INSERT INTO hospitals
         (name, license_number, pan, hfr_id, address, city, state, pincode, bed_count, opd_volume,
          admin_name, admin_email, modules, dpdp_consent, status, created_by)
@@ -4590,10 +4882,16 @@ app.post("/api/hospitals", requireSuperadmin, async (req, res) => {
 
     const hospitalId = result.insertId;
 
+    // req.db is never set here — this route is guarded by requireSuperadmin,
+    // which (correctly) has no hospital context to resolve a pool from yet.
+    // hospitals is master-only regardless, so masterPool is what every
+    // access here should have used all along (real bug found 2026-09-08:
+    // req.db was undefined on this route, so onboarding a new hospital
+    // threw immediately on this exact line).
     let shortCode = buildShortCode(name);
     let suffix = 1;
     while (true) {
-      const [codeRows] = await req.db.query("SELECT id FROM hospitals WHERE short_code = ?", [shortCode]);
+      const [codeRows] = await masterPool.query("SELECT id FROM hospitals WHERE short_code = ?", [shortCode]);
       if (codeRows.length === 0) break;
       suffix += 1;
       shortCode = `${buildShortCode(name)}${suffix}`;
@@ -4630,7 +4928,7 @@ app.post("/api/hospitals", requireSuperadmin, async (req, res) => {
       hospitalId,
     ]);
 
-    await req.db.query("UPDATE hospitals SET short_code = ?, admin_user_id = ?, db_name = ? WHERE id = ?", [
+    await masterPool.query("UPDATE hospitals SET short_code = ?, admin_user_id = ?, db_name = ? WHERE id = ?", [
       shortCode,
       adminUserId,
       dbName,
@@ -5811,6 +6109,26 @@ app.post("/api/billing/patients/:uhid/collect", requireBillingStaff, async (req,
     console.error("Collect patient charges error:", err.message);
     res.status(500).json({ success: false, message: "Server error." });
   }
+});
+
+// Catch-all error handler — MUST be the last app.use() call (Express only
+// treats a 4-arg middleware as an error handler, and only errors from
+// middleware/routes registered before it ever reach it).
+//
+// SECURITY: without this, Express falls back to its own default error
+// handler, which returns the FULL stack trace — including absolute
+// filesystem paths — as the response body for anything that throws outside
+// a route's own try/catch (e.g. malformed JSON hitting express.json()
+// before any route even runs). Confirmed live: POST a broken JSON body to
+// any route and the default handler dumps node_modules paths straight to
+// an unauthenticated caller. This one replaces that for every route in the
+// app, always — not just in production — since there's no reason a JSON
+// API should ever hand a client an HTML page with a stack trace; the real
+// detail belongs in the server console (which is exactly what this logs).
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err.stack || err.message);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({ success: false, message: "Server error. Please try again." });
 });
 
 const PORT = process.env.PORT || 3000;

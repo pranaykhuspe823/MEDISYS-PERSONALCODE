@@ -309,42 +309,42 @@
 
   var ROLE_NAV_ITEMS = {
     receptionist: [
-      { href: '/staff/registration.html', icon: 'registration', label: 'Registration', i18nKey: 'navigation.registration' },
-      { href: '/staff/opd.html', icon: 'calendar', label: 'OPD Queue', i18nKey: 'navigation.opd_queue' },
-      { href: '/staff/opd-queue-board.html', icon: 'queue', label: 'Queue', i18nKey: 'navigation.queue_board' },
-      { href: '/staff/ipd-admission.html', icon: 'admission', label: 'Admission', i18nKey: 'navigation.admission' },
+      { href: '/staff/registration', icon: 'registration', label: 'Registration', i18nKey: 'navigation.registration' },
+      { href: '/staff/opd', icon: 'calendar', label: 'OPD Queue', i18nKey: 'navigation.opd_queue' },
+      { href: '/staff/opd-queue-board', icon: 'queue', label: 'Queue', i18nKey: 'navigation.queue_board' },
+      { href: '/staff/ipd-admission', icon: 'admission', label: 'Admission', i18nKey: 'navigation.admission' },
     ],
     nurse: [
-      { href: '/staff/vitals.html', icon: 'vitals', label: 'OPD Vitals', i18nKey: 'navigation.opd_vitals' },
-      { href: '/staff/ward-setup.html', icon: 'ward', label: 'Ward & Bed', i18nKey: 'navigation.ward_bed' },
-      { href: '/staff/bed-allocation.html', icon: 'bed', label: 'Bed Allocation', i18nKey: 'navigation.bed_allocation' },
-      { href: '/staff/nurse-ipd.html', icon: 'admission', label: 'IPD Patients', i18nKey: 'navigation.ipd_patients' },
-      { href: '/staff/nurse-patients.html', icon: 'queue', label: 'My Patients', i18nKey: 'navigation.my_patients' },
-      { href: '/staff/nurse-all-patients.html', icon: 'queue', label: 'All Patients', i18nKey: 'navigation.all_patients' },
+      { href: '/staff/vitals', icon: 'vitals', label: 'OPD Vitals', i18nKey: 'navigation.opd_vitals' },
+      { href: '/staff/ward-setup', icon: 'ward', label: 'Ward & Bed', i18nKey: 'navigation.ward_bed' },
+      { href: '/staff/bed-allocation', icon: 'bed', label: 'Bed Allocation', i18nKey: 'navigation.bed_allocation' },
+      { href: '/staff/nurse-ipd', icon: 'admission', label: 'IPD Patients', i18nKey: 'navigation.ipd_patients' },
+      { href: '/staff/nurse-patients', icon: 'queue', label: 'My Patients', i18nKey: 'navigation.my_patients' },
+      { href: '/staff/nurse-all-patients', icon: 'queue', label: 'All Patients', i18nKey: 'navigation.all_patients' },
     ],
     doctor: [
-      { href: '/staff/doctor-schedule.html', icon: 'clock', label: 'My Schedule', i18nKey: 'navigation.my_schedule' },
-      { href: '/staff/doctor-queue.html', icon: 'queue', label: 'My Queue', i18nKey: 'navigation.my_queue' },
-      { href: '/staff/doctor-ipd.html', icon: 'admission', label: 'IPD Rounds', i18nKey: 'navigation.ipd_rounds' },
-      { href: '/staff/doctor-patients.html', icon: 'registration', label: 'My Patients', i18nKey: 'navigation.my_patients' },
+      { href: '/staff/doctor-schedule', icon: 'clock', label: 'My Schedule', i18nKey: 'navigation.my_schedule' },
+      { href: '/staff/doctor-queue', icon: 'queue', label: 'My Queue', i18nKey: 'navigation.my_queue' },
+      { href: '/staff/doctor-ipd', icon: 'admission', label: 'IPD Rounds', i18nKey: 'navigation.ipd_rounds' },
+      { href: '/staff/doctor-patients', icon: 'registration', label: 'My Patients', i18nKey: 'navigation.my_patients' },
     ],
-    pharmacist: [{ href: '/staff/pharmacy-queue.html', icon: 'queue', label: 'Pharmacy Queue', i18nKey: 'navigation.pharmacy_queue' }],
-    blood_bank_staff: [{ href: '/staff/blood-bank-queue.html', icon: 'bloodbank', label: 'Blood Bank', i18nKey: 'navigation.blood_bank' }],
+    pharmacist: [{ href: '/staff/pharmacy-queue', icon: 'queue', label: 'Pharmacy Queue', i18nKey: 'navigation.pharmacy_queue' }],
+    blood_bank_staff: [{ href: '/staff/blood-bank-queue', icon: 'bloodbank', label: 'Blood Bank', i18nKey: 'navigation.blood_bank' }],
     hospital_admin: [
-      { href: '/hospital/add-staff.html', icon: 'add_person', label: 'Add Staff', i18nKey: 'navigation.add_staff' },
-      { href: '/hospital/staff.html', icon: 'queue', label: 'Existing Staff', i18nKey: 'navigation.existing_staff' },
-      { href: '/hospital/departments.html', icon: 'departments', label: 'Departments', i18nKey: 'navigation.departments' },
-      { href: '/hospital/nurse-assignment.html', icon: 'nurse', label: 'Nurse Assignment', i18nKey: 'navigation.nurse_assignment' },
-      { href: '/hospital/data-import.html', icon: 'data_import', label: 'Data Import', i18nKey: 'navigation.data_import' },
-      { href: '/hospital/messages.html', icon: 'message', label: 'Messages', i18nKey: 'navigation.messages' },
-      { href: '/hospital/expenses.html', icon: 'expense', label: 'Expense Log', i18nKey: 'navigation.expense_log' },
-      { href: '/hospital/settings.html', icon: 'settings', label: 'Hospital Settings', i18nKey: 'navigation.hospital_settings' },
+      { href: '/hospital/add-staff', icon: 'add_person', label: 'Add Staff', i18nKey: 'navigation.add_staff' },
+      { href: '/hospital/staff', icon: 'queue', label: 'Existing Staff', i18nKey: 'navigation.existing_staff' },
+      { href: '/hospital/departments', icon: 'departments', label: 'Departments', i18nKey: 'navigation.departments' },
+      { href: '/hospital/nurse-assignment', icon: 'nurse', label: 'Nurse Assignment', i18nKey: 'navigation.nurse_assignment' },
+      { href: '/hospital/data-import', icon: 'data_import', label: 'Data Import', i18nKey: 'navigation.data_import' },
+      { href: '/hospital/messages', icon: 'message', label: 'Messages', i18nKey: 'navigation.messages' },
+      { href: '/hospital/expenses', icon: 'expense', label: 'Expense Log', i18nKey: 'navigation.expense_log' },
+      { href: '/hospital/settings', icon: 'settings', label: 'Hospital Settings', i18nKey: 'navigation.hospital_settings' },
     ],
     patient: [
-      { href: '/patient/records.html', icon: 'records', label: 'Medical Records', i18nKey: 'navigation.medical_records' },
-      { href: '/patient/appointments.html', icon: 'calendar', label: 'Appointments', i18nKey: 'navigation.appointments' },
-      { href: '/patient/prescriptions.html', icon: 'prescription', label: 'Prescriptions', i18nKey: 'navigation.prescriptions' },
-      { href: '/patient/bills.html', icon: 'bill', label: 'Bills & Invoices', i18nKey: 'navigation.billing' },
+      { href: '/patient/records', icon: 'records', label: 'Medical Records', i18nKey: 'navigation.medical_records' },
+      { href: '/patient/appointments', icon: 'calendar', label: 'Appointments', i18nKey: 'navigation.appointments' },
+      { href: '/patient/prescriptions', icon: 'prescription', label: 'Prescriptions', i18nKey: 'navigation.prescriptions' },
+      { href: '/patient/bills', icon: 'bill', label: 'Bills & Invoices', i18nKey: 'navigation.billing' },
     ],
   };
 
@@ -356,8 +356,8 @@
     if (role === 'pathology_staff') {
       items =
         details && details.designation === 'Radiologist'
-          ? [{ href: '/staff/radiology-queue.html', icon: 'queue', label: 'Radiology Queue', i18nKey: 'navigation.radiology_queue' }]
-          : [{ href: '/staff/pathology-queue.html', icon: 'queue', label: 'Pathology & Lab', i18nKey: 'navigation.pathology_lab' }];
+          ? [{ href: '/staff/radiology-queue', icon: 'queue', label: 'Radiology Queue', i18nKey: 'navigation.radiology_queue' }]
+          : [{ href: '/staff/pathology-queue', icon: 'queue', label: 'Pathology & Lab', i18nKey: 'navigation.pathology_lab' }];
     } else {
       items = ROLE_NAV_ITEMS[role] || [];
     }
@@ -501,6 +501,30 @@
     if (window.i18n) {
       window.i18n.applyTranslations();
     }
+  });
+
+  // SECURITY — stale portal page after logout via browser back/forward: the
+  // server already sends Cache-Control: no-store on every page, which stops
+  // modern browsers from using the back-forward cache (bfcache) for it at
+  // all — that's the real fix. This is a second, independent layer: if a
+  // page is ever somehow restored from bfcache anyway (an older/unusual
+  // browser, or a future regression in that header), 'pageshow' with
+  // event.persisted=true is the one reliable signal for that, and it fires
+  // even though DOMContentLoaded (what every page's own guardSession() runs
+  // on) never fires again on a bfcache restore — a two-finger trackpad
+  // swipe back after logging out is exactly this case. On that signal,
+  // re-check the session for real and bounce to login if it's gone, instead
+  // of trusting whatever was already sitting on screen.
+  window.addEventListener('pageshow', function (event) {
+    if (!event.persisted) return;
+    fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.user) {
+          window.location.href = '../index';
+        }
+      })
+      .catch(function () {});
   });
 
   document.addEventListener('DOMContentLoaded', function () {

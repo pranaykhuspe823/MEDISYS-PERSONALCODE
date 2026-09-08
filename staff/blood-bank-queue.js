@@ -60,7 +60,7 @@
     const res = await fetch("/api/session", { credentials: "same-origin" });
     const data = await res.json();
     if (!data.user || data.user.role !== "blood_bank_staff") {
-      window.location.href = "../index.html";
+      window.location.href = "../index";
       return null;
     }
     sessionUser = data.user;
@@ -71,7 +71,7 @@
   function wireLogout() {
     document.getElementById("logoutBtn").addEventListener("click", async () => {
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
-      window.location.href = "../index.html";
+      window.location.href = "../index";
     });
   }
 
