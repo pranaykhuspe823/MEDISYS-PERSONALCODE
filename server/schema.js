@@ -1,4 +1,4 @@
-async function ensureSchema(connection) {
+async function ensureSchema(connection, { seedDefaults = true } = {}) {
   await connection.query(`
     CREATE TABLE IF NOT EXISTS hospitals (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -77,9 +77,6 @@ async function ensureSchema(connection) {
   // so the Data Import page's Delete/Undo can also remove staff it created — see
   // server/importRoutes.js DELETE /api/import/:batchId.
   await ensureColumn(connection, "users", "imported_from_batch", "INT NULL");
-
-  await dropColumnIfExists(connection, "hospitals", "db_name");
-  await dropColumnIfExists(connection, "user_directory", "db_name");
 
   await connection.query(`
     CREATE TABLE IF NOT EXISTS departments (
@@ -909,7 +906,26 @@ async function ensureSchema(connection) {
   await ensureColumnInSchema(connection, "medisys_pharmacy", "pharmacy_stock", "extra_fields", "JSON NULL");
   await ensureColumnInSchema(connection, "medisys_pharmacy", "pharmacy_orders", "extra_fields", "JSON NULL");
 
-  await seedDefaultUsers(connection);
+  // Per-hospital database isolation: `hospitals` is only ever meaningfully
+  // populated in the master database now (see server/dbRouter.js) — this
+  // column records which physical database a hospital's own data lives in,
+  // so getHospitalPool() can look it up before connecting.
+  await ensureColumn(connection, "hospitals", "db_name", "VARCHAR(128) NULL");
+
+  // Real bug found 2026-09-07: this ran unconditionally, so calling
+  // ensureSchema against a brand-new, genuinely-empty per-hospital database
+  // (onboarding a new hospital, or provisioning one during the per-hospital
+  // DB migration) would trip seedDefaultUsers' "no hospitals exist yet"
+  // guard EVERY time — silently seeding a fake demo hospital + demo staff
+  // into every real hospital's own dedicated database, every server
+  // restart. seedDefaults now defaults to true (unchanged behavior for
+  // seed.js's fresh-install bootstrap, the only caller that still wants
+  // it) but the multi-database startup/provisioning paths explicitly pass
+  // false — real hospitals' own databases and the master router database
+  // never get demo data auto-seeded into them.
+  if (seedDefaults) {
+    await seedDefaultUsers(connection);
+  }
 }
 
 async function ensureColumn(connection, table, column, definition) {

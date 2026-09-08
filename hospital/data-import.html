@@ -316,9 +316,13 @@
     <!-- Import history -->
     <h2 class="portal-section-title" data-i18n="data_import.history_title">Import History</h2>
     <div class="portal-card">
+      <div id="batchBulkBar" hidden style="margin-bottom: 12px;">
+        <button type="button" id="batchBulkDeleteBtn" class="btn-bulk-delete">Delete selected (0)</button>
+      </div>
       <table class="portal-table" id="batchesTable">
         <thead>
           <tr>
+            <th style="width: 32px;"><input type="checkbox" id="batchSelectAll" aria-label="Select all imports" /></th>
             <th data-i18n="data_import.col_file">File</th>
             <th data-i18n="data_import.col_entity">Type</th>
             <th data-i18n="common.status">Status</th>

@@ -995,9 +995,12 @@
     const data = await res.json();
     const body = document.getElementById("batchesTableBody");
     const emptyState = document.getElementById("batchesEmptyState");
+    const selectAll = document.getElementById("batchSelectAll");
     if (!data.success || data.batches.length === 0) {
       body.innerHTML = "";
       emptyState.hidden = false;
+      if (selectAll) selectAll.checked = false;
+      updateBulkDeleteBar();
       return;
     }
     emptyState.hidden = true;
@@ -1014,6 +1017,7 @@
         // real per-entity undo below, same as before, unless already reverted.
         const canDelete = b.status !== "committed" || !reverted;
         return `<tr>
+          <td>${canDelete ? `<input type="checkbox" class="batch-select-checkbox" data-batch-id="${b.id}" data-entity="${escapeHtml(b.target_entity)}" data-status="${escapeHtml(b.status)}" aria-label="${escapeHtml(t("data_import.select_row", "Select this import"))}" />` : ""}</td>
           <td>${escapeHtml(b.original_filename)}</td>
           <td>${escapeHtml(entityLabelFor(b.target_entity))}</td>
           <td><span class="queue-status ${statusCls}">${escapeHtml(statusLabel)}</span></td>
@@ -1024,9 +1028,99 @@
       })
       .join("");
 
-    body.querySelectorAll("[data-batch-id]").forEach((btn) => {
+    body.querySelectorAll("button[data-batch-id]").forEach((btn) => {
       btn.addEventListener("click", () => deleteBatch(btn.dataset.batchId, btn.dataset.entity, btn.dataset.status));
     });
+    body.querySelectorAll(".batch-select-checkbox").forEach((cb) => {
+      cb.addEventListener("change", updateBulkDeleteBar);
+    });
+    if (selectAll) selectAll.checked = false;
+    updateBulkDeleteBar();
+  }
+
+  function getSelectedBatchCheckboxes() {
+    return Array.from(document.querySelectorAll(".batch-select-checkbox:checked"));
+  }
+
+  function updateBulkDeleteBar() {
+    const bar = document.getElementById("batchBulkBar");
+    const btn = document.getElementById("batchBulkDeleteBtn");
+    if (!bar || !btn) return;
+    const count = getSelectedBatchCheckboxes().length;
+    bar.hidden = count === 0;
+    btn.textContent = t("data_import.delete_selected_btn", "Delete selected ({count})", { count });
+  }
+
+  async function deleteBulkBatches() {
+    const checkboxes = getSelectedBatchCheckboxes();
+    if (checkboxes.length === 0) return;
+    const confirmMsg = t(
+      "data_import.confirm_delete_selected_batches",
+      "Delete these {count} import(s) from your history? Any that were committed will have every row they created removed, exactly like deleting them one at a time — this can't be undone.",
+      { count: checkboxes.length }
+    );
+    if (!confirm(confirmMsg)) return;
+
+    const btn = document.getElementById("batchBulkDeleteBtn");
+    const messageEl = document.getElementById("batchDeleteMessage");
+    btn.disabled = true;
+    let successCount = 0;
+    let failCount = 0;
+    for (let i = 0; i < checkboxes.length; i++) {
+      messageEl.textContent = t("data_import.bulk_delete_progress", "Deleting {done} of {total}…", {
+        done: i + 1,
+        total: checkboxes.length,
+      });
+      const batchId = checkboxes[i].dataset.batchId;
+      try {
+        const res = await fetch(`/api/import/${batchId}`, { method: "DELETE", credentials: "same-origin" });
+        const data = await res.json();
+        if (data.success) successCount++;
+        else failCount++;
+      } catch {
+        failCount++;
+      }
+    }
+    btn.disabled = false;
+
+    messageEl.textContent =
+      failCount === 0
+        ? t("data_import.bulk_delete_all_success", "{count} import(s) deleted.", { count: successCount })
+        : t("data_import.bulk_delete_summary", "{success} of {total} import(s) deleted. {failed} failed.", {
+            success: successCount,
+            total: checkboxes.length,
+            failed: failCount,
+          });
+    if (window.showToast) {
+      showToast(
+        failCount === 0
+          ? t("data_import.bulk_delete_all_success", "{count} import(s) deleted.", { count: successCount })
+          : t("data_import.bulk_delete_summary", "{success} of {total} import(s) deleted. {failed} failed.", {
+              success: successCount,
+              total: checkboxes.length,
+              failed: failCount,
+            }),
+        failCount === 0 ? "success" : "error"
+      );
+    }
+
+    loadBatches();
+    loadCustomFields();
+    loadPatients();
+  }
+
+  function wireBatchBulkActions() {
+    const selectAll = document.getElementById("batchSelectAll");
+    const bulkBtn = document.getElementById("batchBulkDeleteBtn");
+    if (selectAll) {
+      selectAll.addEventListener("change", () => {
+        document.querySelectorAll(".batch-select-checkbox").forEach((cb) => {
+          cb.checked = selectAll.checked;
+        });
+        updateBulkDeleteBar();
+      });
+    }
+    if (bulkBtn) bulkBtn.addEventListener("click", deleteBulkBatches);
   }
 
   async function deleteBatch(batchId, entity, status) {
@@ -1083,6 +1177,7 @@
     wireMappingActions();
     wireMappingModeToggle();
     wireAutoActions();
+    wireBatchBulkActions();
 
     document.getElementById("customFieldsEntitySelect").addEventListener("change", loadCustomFields);
     let searchDebounce;

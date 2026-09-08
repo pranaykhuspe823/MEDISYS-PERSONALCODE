@@ -1,14 +1,10 @@
-require("dotenv").config();
-const mysql = require("mysql2/promise");
+// Thin compatibility shim: standalone scripts (seed.js, demo-seed.js,
+// check-date.js, etc.) only ever need "a" connection and keep working
+// unchanged against the master database. Real request-handling code should
+// use req.db (see server.js role-gate middlewares) for hospital-scoped
+// tables, or dbRouter's masterPool/getHospitalPool directly for the
+// hospital directory / login / superadmin routes.
+const { masterPool, getHospitalPool } = require("./dbRouter");
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-});
-
-module.exports = pool;
+module.exports = masterPool;
+module.exports.getHospitalPool = getHospitalPool;

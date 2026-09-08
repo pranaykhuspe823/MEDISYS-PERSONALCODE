@@ -50,8 +50,12 @@ function resolveNurseAssignment({ mode, wardId, doctorUserId, shift, dayOfWeek, 
 }
 
 // DB-wiring shell around the pure function above — called the moment a bed is allocated.
+// `pool` is this hospital's own dedicated database (ipd_admissions/roster/teams all
+// live there); nurse_assignment_mode lives on the master `hospitals` row instead
+// (see server/dbRouter.js), so that one lookup goes through masterPool directly.
 async function assignNurseForAdmission(pool, hospitalId, admissionId) {
-  const [[hospitalRow]] = await pool.query("SELECT nurse_assignment_mode FROM hospitals WHERE id = ? LIMIT 1", [
+  const { masterPool } = require("./dbRouter");
+  const [[hospitalRow]] = await masterPool.query("SELECT nurse_assignment_mode FROM hospitals WHERE id = ? LIMIT 1", [
     hospitalId,
   ]);
   const mode = hospitalRow?.nurse_assignment_mode || "ward_based";

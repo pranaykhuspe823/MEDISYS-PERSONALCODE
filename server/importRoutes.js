@@ -19,7 +19,8 @@ const Papa = require("papaparse");
 const XLSX = require("xlsx");
 const Fuse = require("fuse.js");
 const Ajv = require("ajv");
-const pool = require("./db");
+const masterPool = require("./db");
+const { getHospitalPool } = require("./dbRouter");
 const bcrypt = require("bcrypt");
 const { getEntity, listEntities, MULTI_ENTITY_TABLE_NAME_MAP, MULTI_ENTITY_TIERS, MULTI_ENTITY_AUTO_SKIP_TABLES } = require("./schemaRegistry");
 const { applyTransform, looksLikeDate, looksLikeNumber, looksLikeBoolean } = require("./importTransforms");
@@ -40,9 +41,17 @@ const router = express.Router();
 const ajv = new Ajv({ allErrors: true, strict: false });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-function requireHospitalAdmin(req, res, next) {
-  if (req.session.user && req.session.user.role === "hospital_admin") return next();
-  return res.status(401).json({ success: false, message: "Hospital admin session required." });
+async function requireHospitalAdmin(req, res, next) {
+  if (!req.session.user || req.session.user.role !== "hospital_admin") {
+    return res.status(401).json({ success: false, message: "Hospital admin session required." });
+  }
+  try {
+    req.db = await getHospitalPool(req.session.user.hospitalId);
+    return next();
+  } catch (err) {
+    console.error("Hospital pool lookup error:", err.message);
+    return res.status(500).json({ success: false, message: "Server error. Please try again." });
+  }
 }
 
 // GET /field-usage/:entity below is a cross-hospital view (by design — its
@@ -221,8 +230,8 @@ function getAjvValidator(entityName, entityDef) {
 // required". Now the best-scoring header wins each target field and every
 // other contender for that field is downgraded to an unmatched/extra_field
 // suggestion instead of silently colliding.
-async function buildFieldReport(hospitalId, sourceName, targetEntity, entityDef, headers, rows) {
-  const [savedMappings] = await pool.query(
+async function buildFieldReport(db, hospitalId, sourceName, targetEntity, entityDef, headers, rows) {
+  const [savedMappings] = await db.query(
     `SELECT source_field, target_field, target_type, transform_fn FROM import_field_mappings
      WHERE hospital_id = ? AND source_name = ? AND target_entity = ?`,
     [hospitalId, sourceName, targetEntity]
@@ -421,12 +430,12 @@ function detectSingleEntityByFit(headers) {
 // an auto-detected one (detectSingleEntityByFit, above) — staging, field-
 // mapping, and the batch status update are identical either way; only WHY
 // this targetEntity was chosen differs, and that's surfaced by the caller.
-async function stageSingleEntityBatch(hospitalId, batchId, sourceName, targetEntity, entityDef, parsed) {
+async function stageSingleEntityBatch(db, hospitalId, batchId, sourceName, targetEntity, entityDef, parsed) {
   const stagingValues = parsed.rows.map((row, i) => [batchId, i + 1, JSON.stringify(row), "pending"]);
-  await pool.query(`INSERT INTO import_staging_rows (batch_id, row_num, raw_data, status) VALUES ?`, [stagingValues]);
+  await db.query(`INSERT INTO import_staging_rows (batch_id, row_num, raw_data, status) VALUES ?`, [stagingValues]);
 
-  const report = await buildFieldReport(hospitalId, sourceName, targetEntity, entityDef, parsed.headers, parsed.rows);
-  await pool.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [report.allSavedFromHistory ? "ready" : "mapping", batchId]);
+  const report = await buildFieldReport(db, hospitalId, sourceName, targetEntity, entityDef, parsed.headers, parsed.rows);
+  await db.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [report.allSavedFromHistory ? "ready" : "mapping", batchId]);
 
   return {
     status: report.allSavedFromHistory ? "ready" : "mapping",
@@ -554,8 +563,8 @@ function labelForEntity(entityKey, def) {
 // commit before wards/beds/opd_visits, and so on, all the way through bills
 // and payments — with zero frontend changes needed, since a "multi" batch
 // produces the exact same { buckets: [...] } shape an "auto" batch always has.
-async function stageMultiEntityBatch(hospitalId, batchId, sourceName, parsed, multi) {
-  await pool.query(`UPDATE import_batches SET target_entity = 'multi' WHERE id = ?`, [batchId]);
+async function stageMultiEntityBatch(db, hospitalId, batchId, sourceName, parsed, multi) {
+  await db.query(`UPDATE import_batches SET target_entity = 'multi' WHERE id = ?`, [batchId]);
 
   const classified = classifyMultiEntityRows(parsed.rows, multi.tableNameColumn, parsed.headers);
   const stagingValues = classified.map((c) => [
@@ -570,7 +579,7 @@ async function stageMultiEntityBatch(hospitalId, batchId, sourceName, parsed, mu
     c.entity,
     c.label ? String(c.label).slice(0, 150) : null,
   ]);
-  await pool.query(
+  await db.query(
     `INSERT INTO import_staging_rows (batch_id, row_num, raw_data, status, detected_entity, detection_label) VALUES ?`,
     [stagingValues]
   );
@@ -613,7 +622,7 @@ async function stageMultiEntityBatch(hospitalId, batchId, sourceName, parsed, mu
     const relevantHeaders = parsed.headers
       .filter((h) => h !== multi.tableNameColumn && h.trim().toLowerCase() !== "id")
       .filter((h) => rowsForEntity.some((r) => r[h] !== null && r[h] !== undefined && String(r[h]).trim() !== ""));
-    const report = await buildFieldReport(hospitalId, sourceName, entityKey, def, relevantHeaders, rowsForEntity);
+    const report = await buildFieldReport(db, hospitalId, sourceName, entityKey, def, relevantHeaders, rowsForEntity);
     // table_name remains the authoritative signal for WHICH bucket a row
     // lands in — this never changes that. It's a sanity check surfaced to
     // the admin: if this bucket's own required fields barely show up among
@@ -651,7 +660,7 @@ async function stageMultiEntityBatch(hospitalId, batchId, sourceName, parsed, mu
   }
 
   const allReady = buckets.every((b) => b.status === "ready");
-  await pool.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [allReady ? "ready" : "mapping", batchId]);
+  await db.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [allReady ? "ready" : "mapping", batchId]);
 
   const tableBreakdown = {};
   const autoSkipped = {};
@@ -753,7 +762,7 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
   // 'uploaded'/'mapping' forever had no Delete button either.
   let batchId;
   try {
-    const [batchResult] = await pool.query(
+    const [batchResult] = await req.db.query(
       `INSERT INTO import_batches (batch_uid, hospital_id, source_name, original_filename, target_entity, uploaded_by, status, total_rows)
        VALUES (?, ?, ?, ?, ?, ?, 'uploaded', ?)`,
       [batchUid, hospitalId, sourceName, req.file.originalname, targetEntity, userId, parsed.rows.length]
@@ -763,7 +772,7 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
     // ---------- Auto-detect (mixed dataset): sort rows into buckets first ----------
     if (isAuto) {
       if (multi) {
-        const multiResult = await stageMultiEntityBatch(hospitalId, batchId, sourceName, parsed, multi);
+        const multiResult = await stageMultiEntityBatch(req.db, hospitalId, batchId, sourceName, parsed, multi);
         return res.json({
           success: true,
           batchId,
@@ -780,8 +789,8 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
       }
 
       if (singleFit) {
-        await pool.query(`UPDATE import_batches SET target_entity = ? WHERE id = ?`, [singleFit.key, batchId]);
-        const result = await stageSingleEntityBatch(hospitalId, batchId, sourceName, singleFit.key, singleFit.def, parsed);
+        await req.db.query(`UPDATE import_batches SET target_entity = ? WHERE id = ?`, [singleFit.key, batchId]);
+        const result = await stageSingleEntityBatch(req.db, hospitalId, batchId, sourceName, singleFit.key, singleFit.def, parsed);
         return res.json({
           success: true,
           batchId,
@@ -808,7 +817,7 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
       });
 
       const stagingValues = classified.map((c) => [batchId, c.rowNum, JSON.stringify(c.row), "pending", c.entity, c.label || null]);
-      await pool.query(
+      await req.db.query(
         `INSERT INTO import_staging_rows (batch_id, row_num, raw_data, status, detected_entity, detection_label) VALUES ?`,
         [stagingValues]
       );
@@ -826,7 +835,7 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
         const rowsForEntity = classified.filter((c) => c.entity === entity).map((c) => c.row);
         if (rowsForEntity.length === 0) continue;
         const def = getEntity(entity);
-        const report = await buildFieldReport(hospitalId, sourceName, entity, def, parsed.headers, rowsForEntity);
+        const report = await buildFieldReport(req.db, hospitalId, sourceName, entity, def, parsed.headers, rowsForEntity);
         buckets.push({
           entity,
           entityLabel: def.role ? ROLE_LABELS[entity] || entity : entity === "patients" ? "Patient records" : entity,
@@ -852,7 +861,7 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
       }
 
       const allReady = buckets.every((b) => b.status === "ready");
-      await pool.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [allReady ? "ready" : "mapping", batchId]);
+      await req.db.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [allReady ? "ready" : "mapping", batchId]);
 
       return res.json({
         success: true,
@@ -876,13 +885,13 @@ router.post("/upload", requireHospitalAdmin, upload.single("file"), async (req, 
     // means the wrong entity was picked (this is exactly what happened with
     // a 74-row "dummy user dataset" that silently collapsed into one row) —
     // see stageSingleEntityBatch's singleRowEntityWarning.
-    const result = await stageSingleEntityBatch(hospitalId, batchId, sourceName, targetEntity, entityDef, parsed);
+    const result = await stageSingleEntityBatch(req.db, hospitalId, batchId, sourceName, targetEntity, entityDef, parsed);
     res.json({ success: true, batchId, batchUid, targetEntity, sourceName, totalRows: parsed.rows.length, ...result });
   } catch (err) {
     console.error("Import upload error:", err.message);
     if (batchId) {
       try {
-        await pool.query(`UPDATE import_batches SET status = 'failed' WHERE id = ?`, [batchId]);
+        await req.db.query(`UPDATE import_batches SET status = 'failed' WHERE id = ?`, [batchId]);
       } catch {
         /* best-effort status update — the 500 below still reports the real failure either way */
       }
@@ -903,7 +912,7 @@ router.post("/:batchId/reclassify", requireHospitalAdmin, async (req, res) => {
 
   try {
     const { hospitalId } = req.session.user;
-    const [[batch]] = await pool.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
+    const [[batch]] = await req.db.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
       req.params.batchId,
       hospitalId,
     ]);
@@ -912,7 +921,7 @@ router.post("/:batchId/reclassify", requireHospitalAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "This action only applies to an auto-detected or multi-table import." });
     }
 
-    const [rows] = await pool.query(
+    const [rows] = await req.db.query(
       `SELECT id, raw_data FROM import_staging_rows WHERE batch_id = ? AND detected_entity IS NULL`,
       [batch.id]
     );
@@ -925,7 +934,7 @@ router.post("/:batchId/reclassify", requireHospitalAdmin, async (req, res) => {
     // "Ignore this column" at the per-field mapping step. The raw data stays
     // in import_staging_rows either way, just marked as never going anywhere.
     if (skip) {
-      await pool.query(`UPDATE import_staging_rows SET status = 'skipped', detected_entity = 'skipped' WHERE batch_id = ? AND detected_entity IS NULL`, [
+      await req.db.query(`UPDATE import_staging_rows SET status = 'skipped', detected_entity = 'skipped' WHERE batch_id = ? AND detected_entity IS NULL`, [
         batch.id,
       ]);
       return res.json({ success: true, skipped: true, rowCount: rows.length });
@@ -936,13 +945,13 @@ router.post("/:batchId/reclassify", requireHospitalAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: `Unknown entity. Supported: ${listEntities().join(", ")}.` });
     }
 
-    await pool.query(`UPDATE import_staging_rows SET detected_entity = ? WHERE batch_id = ? AND detected_entity IS NULL`, [
+    await req.db.query(`UPDATE import_staging_rows SET detected_entity = ? WHERE batch_id = ? AND detected_entity IS NULL`, [
       targetEntity,
       batch.id,
     ]);
 
     const headers = Object.keys(rows[0].raw_data);
-    const report = await buildFieldReport(hospitalId, batch.source_name, targetEntity, entityDef, headers, rows.map((r) => r.raw_data));
+    const report = await buildFieldReport(req.db, hospitalId, batch.source_name, targetEntity, entityDef, headers, rows.map((r) => r.raw_data));
 
     res.json({
       success: true,
@@ -969,7 +978,7 @@ router.post("/:batchId/mapping", requireHospitalAdmin, async (req, res) => {
 
   try {
     const { hospitalId, userId } = req.session.user;
-    const [[batch]] = await pool.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
+    const [[batch]] = await req.db.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
       req.params.batchId,
       hospitalId,
     ]);
@@ -1021,7 +1030,7 @@ router.post("/:batchId/mapping", requireHospitalAdmin, async (req, res) => {
       // "never silently drop data" rule; there's no code path that defaults
       // a field to 'ignored' on its own.
       const targetType = ["column", "extra_field", "ignored"].includes(m.targetType) ? m.targetType : "extra_field";
-      await pool.query(
+      await req.db.query(
         `INSERT INTO import_field_mappings (hospital_id, source_name, target_entity, source_field, target_field, target_type, transform_fn, confirmed_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE target_field = VALUES(target_field), target_type = VALUES(target_type),
@@ -1031,7 +1040,7 @@ router.post("/:batchId/mapping", requireHospitalAdmin, async (req, res) => {
     }
 
     if (!isBucketedBatch(batch.target_entity)) {
-      await pool.query(`UPDATE import_batches SET status = 'ready' WHERE id = ?`, [batch.id]);
+      await req.db.query(`UPDATE import_batches SET status = 'ready' WHERE id = ?`, [batch.id]);
       return res.json({ success: true });
     }
 
@@ -1040,7 +1049,7 @@ router.post("/:batchId/mapping", requireHospitalAdmin, async (req, res) => {
     // unresolved "Unclassified" group must be explicitly reclassified or
     // explicitly skipped (see POST /:batchId/reclassify) before commit is
     // allowed, so nothing gets left behind without a deliberate decision.
-    const [distinctEntities] = await pool.query(
+    const [distinctEntities] = await req.db.query(
       `SELECT DISTINCT detected_entity FROM import_staging_rows WHERE batch_id = ?`,
       [batch.id]
     );
@@ -1049,7 +1058,7 @@ router.post("/:batchId/mapping", requireHospitalAdmin, async (req, res) => {
     if (allMapped) {
       for (const { detected_entity } of distinctEntities) {
         if (detected_entity === null || detected_entity === "skipped") continue;
-        const [[existing]] = await pool.query(
+        const [[existing]] = await req.db.query(
           `SELECT id FROM import_field_mappings WHERE hospital_id = ? AND source_name = ? AND target_entity = ? LIMIT 1`,
           [hospitalId, batch.source_name, detected_entity]
         );
@@ -1059,7 +1068,7 @@ router.post("/:batchId/mapping", requireHospitalAdmin, async (req, res) => {
         }
       }
     }
-    await pool.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [allMapped ? "ready" : "mapping", batch.id]);
+    await req.db.query(`UPDATE import_batches SET status = ? WHERE id = ?`, [allMapped ? "ready" : "mapping", batch.id]);
     res.json({ success: true, allMapped });
   } catch (err) {
     console.error("Import mapping error:", err.message);
@@ -1176,8 +1185,8 @@ async function commitGenericRow(connection, hospitalId, entityDef, columnValues,
   return result.insertId;
 }
 
-async function commitEntityRows(hospitalId, userId, batch, entityName, entityDef, stagingRows) {
-  const [mappingRows] = await pool.query(
+async function commitEntityRows(db, hospitalId, userId, batch, entityName, entityDef, stagingRows) {
+  const [mappingRows] = await db.query(
     `SELECT source_field, target_field, target_type, transform_fn FROM import_field_mappings
      WHERE hospital_id = ? AND source_name = ? AND target_entity = ?`,
     [hospitalId, batch.source_name, entityName]
@@ -1196,7 +1205,7 @@ async function commitEntityRows(hospitalId, userId, batch, entityName, entityDef
   for (const header of extraFieldHeaders) {
     const samples = stagingRows.slice(0, 50).map((r) => r.raw_data[header]);
     const fieldType = inferFieldType(samples);
-    await pool.query(
+    await db.query(
       `INSERT INTO hospital_custom_fields (hospital_id, entity, field_key, field_label, field_type, auto_created, created_from_batch)
        VALUES (?, ?, ?, ?, ?, TRUE, ?)
        ON DUPLICATE KEY UPDATE field_label = field_label`,
@@ -1230,7 +1239,7 @@ async function commitEntityRows(hospitalId, userId, batch, entityName, entityDef
     mappingByField.set(header, { ...mapping, target_type: "extra_field", target_field: null });
     const samples = stagingRows.slice(0, 50).map((r) => r.raw_data[header]);
     const fieldType = inferFieldType(samples);
-    await pool.query(
+    await db.query(
       `INSERT INTO hospital_custom_fields (hospital_id, entity, field_key, field_label, field_type, auto_created, created_from_batch)
        VALUES (?, ?, ?, ?, ?, TRUE, ?)
        ON DUPLICATE KEY UPDATE field_label = field_label`,
@@ -1275,7 +1284,7 @@ async function commitEntityRows(hospitalId, userId, batch, entityName, entityDef
     }
   }
 
-  const connection = await pool.getConnection();
+  const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
     await connection.query(`UPDATE import_batches SET status = 'committing' WHERE id = ?`, [batch.id]);
@@ -1498,7 +1507,7 @@ async function commitEntityRows(hospitalId, userId, batch, entityName, entityDef
         for (const [key, map] of Object.entries(idMapsRuntime)) {
           serializable[key] = Object.fromEntries(map.entries());
         }
-        await pool.query(`UPDATE import_batches SET multi_entity_id_map = ? WHERE id = ?`, [JSON.stringify(serializable), batch.id]);
+        await db.query(`UPDATE import_batches SET multi_entity_id_map = ? WHERE id = ?`, [JSON.stringify(serializable), batch.id]);
       } catch (mapErr) {
         console.error("Failed to persist multi-entity id map:", mapErr.message);
       }
@@ -1537,7 +1546,7 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
   const { hospitalId } = req.session.user;
 
   try {
-    const [[batch]] = await pool.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
+    const [[batch]] = await req.db.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
       req.params.batchId,
       hospitalId,
     ]);
@@ -1546,9 +1555,9 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
 
     if (!isBucketedBatch(batch.target_entity)) {
       const entityDef = getEntity(batch.target_entity);
-      const [stagingRows] = await pool.query(`SELECT * FROM import_staging_rows WHERE batch_id = ? ORDER BY row_num ASC`, [batch.id]);
-      const result = await commitEntityRows(hospitalId, req.session.user.userId, batch, batch.target_entity, entityDef, stagingRows);
-      await pool.query(
+      const [stagingRows] = await req.db.query(`SELECT * FROM import_staging_rows WHERE batch_id = ? ORDER BY row_num ASC`, [batch.id]);
+      const result = await commitEntityRows(req.db, hospitalId, req.session.user.userId, batch, batch.target_entity, entityDef, stagingRows);
+      await req.db.query(
         `UPDATE import_batches SET status = 'committed', committed_rows = ?, failed_rows = ?, committed_at = NOW() WHERE id = ?`,
         [result.committedCount, result.failedCount, batch.id]
       );
@@ -1571,7 +1580,7 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
     if (!entityDef) {
       return res.status(400).json({ success: false, message: "A valid targetEntity is required for this batch." });
     }
-    const [pendingUnclassified] = await pool.query(
+    const [pendingUnclassified] = await req.db.query(
       `SELECT COUNT(*) AS c FROM import_staging_rows WHERE batch_id = ? AND detected_entity IS NULL`,
       [batch.id]
     );
@@ -1582,7 +1591,7 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
       });
     }
 
-    const [stagingRows] = await pool.query(
+    const [stagingRows] = await req.db.query(
       `SELECT * FROM import_staging_rows WHERE batch_id = ? AND detected_entity = ? AND status IN ('pending','mapped') ORDER BY row_num ASC`,
       [batch.id, targetEntity]
     );
@@ -1590,12 +1599,12 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "This group has already been imported." });
     }
 
-    const result = await commitEntityRows(hospitalId, req.session.user.userId, batch, targetEntity, entityDef, stagingRows);
+    const result = await commitEntityRows(req.db, hospitalId, req.session.user.userId, batch, targetEntity, entityDef, stagingRows);
 
     // Running totals across every bucket committed so far this batch, not
     // just this call — an auto-detect batch is only "done" once every
     // bucket (patients, doctors, nurses, ...) has had its turn.
-    const [[counts]] = await pool.query(
+    const [[counts]] = await req.db.query(
       `SELECT
          SUM(status = 'committed') AS committed,
          SUM(status = 'error') AS failed,
@@ -1604,7 +1613,7 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
       [batch.id]
     );
     const batchComplete = Number(counts.remaining) === 0;
-    await pool.query(
+    await req.db.query(
       `UPDATE import_batches SET status = ?, committed_rows = ?, failed_rows = ?, committed_at = ? WHERE id = ?`,
       [batchComplete ? "committed" : "committing", Number(counts.committed) || 0, Number(counts.failed) || 0, batchComplete ? new Date() : null, batch.id]
     );
@@ -1627,7 +1636,7 @@ router.post("/:batchId/commit", requireHospitalAdmin, async (req, res) => {
   } catch (err) {
     console.error("Import commit error:", err.message);
     try {
-      await pool.query(`UPDATE import_batches SET status = 'failed' WHERE id = ?`, [req.params.batchId]);
+      await req.db.query(`UPDATE import_batches SET status = 'failed' WHERE id = ?`, [req.params.batchId]);
     } catch {
       /* best-effort status update */
     }
@@ -1881,7 +1890,7 @@ async function commitStaffRow(connection, hospitalId, batchId, role, hospitalSho
 
 router.get("/batches", requireHospitalAdmin, async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await req.db.query(
       `SELECT id, batch_uid, source_name, original_filename, target_entity, status, total_rows, committed_rows, failed_rows, created_at, committed_at, reverted_at
        FROM import_batches WHERE hospital_id = ? ORDER BY created_at DESC LIMIT 50`,
       [req.session.user.hospitalId]
@@ -1909,7 +1918,7 @@ router.delete("/:batchId", requireHospitalAdmin, async (req, res) => {
   let connection;
 
   try {
-    const [[batch]] = await pool.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
+    const [[batch]] = await req.db.query(`SELECT * FROM import_batches WHERE id = ? AND hospital_id = ? LIMIT 1`, [
       req.params.batchId,
       hospitalId,
     ]);
@@ -1939,15 +1948,15 @@ router.delete("/:batchId", requireHospitalAdmin, async (req, res) => {
     // it already does for a fully-committed batch — it doesn't require every
     // tier to have finished.
     if (batch.status !== "committed" && !(batch.committed_rows > 0)) {
-      await pool.query(`DELETE FROM import_staging_rows WHERE batch_id = ?`, [batch.id]);
-      await pool.query(`DELETE FROM import_batches WHERE id = ?`, [batch.id]);
+      await req.db.query(`DELETE FROM import_staging_rows WHERE batch_id = ?`, [batch.id]);
+      await req.db.query(`DELETE FROM import_batches WHERE id = ?`, [batch.id]);
       return res.json({ success: true, discarded: true, deletedRows: 0 });
     }
     if (batch.reverted_at) {
       return res.status(409).json({ success: false, message: "This import was already deleted." });
     }
 
-    connection = await pool.getConnection();
+    connection = await req.db.getConnection();
     await connection.beginTransaction();
 
     if (batch.target_entity === "patients") {
@@ -1995,7 +2004,7 @@ router.delete("/:batchId", requireHospitalAdmin, async (req, res) => {
       // Ordered by id, not committed_at — two batches committed within the
       // same second would tie on a TIMESTAMP column (1-second resolution),
       // but id is a strictly increasing auto-increment, so it's unambiguous.
-      const [[mostRecent]] = await pool.query(
+      const [[mostRecent]] = await req.db.query(
         `SELECT id FROM import_batches WHERE hospital_id = ? AND target_entity = 'hospitals' AND status = 'committed' AND reverted_at IS NULL
          ORDER BY id DESC LIMIT 1`,
         [hospitalId]
@@ -2153,7 +2162,7 @@ router.delete("/:batchId", requireHospitalAdmin, async (req, res) => {
         // batch that could have snapshotted the hospitals row (a plain
         // target_entity='hospitals' batch or a 'multi' batch with a hospitals
         // bucket), not just this one target_entity value.
-        const [[mostRecent]] = await pool.query(
+        const [[mostRecent]] = await req.db.query(
           `SELECT id FROM import_batches WHERE hospital_id = ? AND pre_commit_snapshot IS NOT NULL AND status = 'committed' AND reverted_at IS NULL
            ORDER BY id DESC LIMIT 1`,
           [hospitalId]
@@ -2229,11 +2238,34 @@ router.get("/field-usage/:entity", requireSuperadmin, async (req, res) => {
     // extra fields are common ACROSS hospitals, to decide if one should
     // graduate into a real schemaRegistry.js column. Only key/type/hospital
     // counts are returned, never any actual patient/hospital data.
-    const [rows] = await pool.query(
-      `SELECT field_key, field_type, COUNT(DISTINCT hospital_id) AS hospital_count
-       FROM hospital_custom_fields WHERE entity = ? GROUP BY field_key, field_type ORDER BY hospital_count DESC`,
-      [req.params.entity]
-    );
+    //
+    // Per-hospital database isolation (2026-09-07): hospital_custom_fields
+    // now lives inside each hospital's own database, not one shared table,
+    // so this can no longer be a single GROUP BY query — it fans out across
+    // every hospital's own pool and merges the per-hospital field usage in
+    // application code instead.
+    const [hospitalRows] = await masterPool.query(`SELECT id, db_name FROM hospitals WHERE db_name IS NOT NULL`);
+    const usage = new Map(); // "key|type" -> Set of hospital ids that use it
+    for (const h of hospitalRows) {
+      let hPool;
+      try {
+        hPool = await getHospitalPool(h.id);
+      } catch {
+        continue; // hospital has no reachable database yet — skip, not fatal
+      }
+      const [rows] = await hPool.query(
+        `SELECT DISTINCT field_key, field_type FROM hospital_custom_fields WHERE entity = ?`,
+        [req.params.entity]
+      );
+      for (const r of rows) {
+        const mapKey = `${r.field_key}|${r.field_type}`;
+        if (!usage.has(mapKey)) usage.set(mapKey, { field_key: r.field_key, field_type: r.field_type, hospitalIds: new Set() });
+        usage.get(mapKey).hospitalIds.add(h.id);
+      }
+    }
+    const rows = [...usage.values()]
+      .map((u) => ({ field_key: u.field_key, field_type: u.field_type, hospital_count: u.hospitalIds.size }))
+      .sort((a, b) => b.hospital_count - a.hospital_count);
     res.json({ success: true, fieldUsage: rows });
   } catch (err) {
     console.error("Field usage error:", err.message);

@@ -507,6 +507,26 @@
   color: #922b21;
 }
 
+.btn-bulk-delete {
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-bulk-delete:hover {
+  background: #922b21;
+}
+
+.btn-bulk-delete:disabled {
+  background: #d9b3ae;
+  cursor: not-allowed;
+}
+
 .portal-danger-zone {
   margin-top: 28px;
   padding-top: 20px;
