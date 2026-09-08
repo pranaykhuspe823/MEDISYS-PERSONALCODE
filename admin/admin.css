@@ -471,6 +471,9 @@
 .portal-table tbody tr:has(.queue-status.in-consultation) td:first-child {
   border-left-color: var(--indigo);
 }
+.portal-table tbody tr:has(.queue-status.called) td:first-child {
+  border-left-color: var(--coral);
+}
 
 .portal-table tbody tr:last-child td {
   border-bottom: none;
@@ -1480,6 +1483,11 @@ a.module-card {
 .queue-status.waiting {
   background: #fdf1dc;
   color: var(--gold);
+}
+
+.queue-status.called {
+  background: var(--coral-tint, #fcece6);
+  color: var(--coral-dark, #c24a2b);
 }
 
 .queue-status.in-consultation {

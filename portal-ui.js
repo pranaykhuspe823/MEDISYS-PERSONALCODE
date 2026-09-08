@@ -311,6 +311,7 @@
     receptionist: [
       { href: '/staff/registration.html', icon: 'registration', label: 'Registration', i18nKey: 'navigation.registration' },
       { href: '/staff/opd.html', icon: 'calendar', label: 'OPD Queue', i18nKey: 'navigation.opd_queue' },
+      { href: '/staff/opd-queue-board.html', icon: 'queue', label: 'Queue', i18nKey: 'navigation.queue_board' },
       { href: '/staff/ipd-admission.html', icon: 'admission', label: 'Admission', i18nKey: 'navigation.admission' },
     ],
     nurse: [

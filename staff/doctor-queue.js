@@ -54,6 +54,7 @@
 
   const STATUS_MAP = {
     waiting: "opd.status_waiting",
+    called: "opd.status_called",
     in_consultation: "opd.status_in_consultation",
     "in-consultation": "opd.status_in_consultation",
     completed: "opd.status_completed",
@@ -68,6 +69,7 @@
     }
     const fallbacks = {
       waiting: "Waiting",
+      called: "Called",
       in_consultation: "In Consultation",
       "in-consultation": "In Consultation",
       completed: "Completed",
@@ -152,15 +154,23 @@
     emptyState.hidden = true;
 
     const callLabel = window.i18n ? window.i18n.t("doctor_queue.call_patient") : "Call";
+    const startConsultingLabel = window.i18n ? window.i18n.t("doctor_queue.start_consulting") : "Start Consulting";
     const consultLabel = window.i18n ? window.i18n.t("doctor_queue.consult") : "Consult";
     const walkInLabel = window.i18n ? window.i18n.t("registration.walk_in") : "Walk-in";
 
+    // Three-stage flow, each stage its own visible status on the live queue
+    // board (see opd-queue-board.js): waiting -[Call]-> called
+    // -[Start Consulting]-> in-consultation. A reload while already
+    // in-consultation (e.g. the doctor navigated away mid-consult) just
+    // reopens the form — it never re-PATCHes a status that's already set.
     tbody.innerHTML = data.queue
       .map((v) => {
         const isTele = v.source === "telemedicine";
         let actionBtn = "";
         if (v.status === "waiting") {
-          actionBtn = `<button type="button" class="wizard-suggest-btn call-btn" data-id="${v.id}" data-uhid="${escapeHtml(v.patient_uhid)}" data-name="${escapeHtml(v.patient_name || v.patient_uhid)}">${escapeHtml(callLabel)}</button>`;
+          actionBtn = `<button type="button" class="wizard-suggest-btn call-btn" data-id="${v.id}">${escapeHtml(callLabel)}</button>`;
+        } else if (v.status === "called") {
+          actionBtn = `<button type="button" class="wizard-suggest-btn start-consult-btn" data-id="${v.id}" data-uhid="${escapeHtml(v.patient_uhid)}" data-name="${escapeHtml(v.patient_name || v.patient_uhid)}" data-source="${escapeHtml(v.source)}">${escapeHtml(startConsultingLabel)}</button>`;
         } else if (v.status === "in-consultation") {
           const label = isTele ? `📹 ${consultLabel}` : consultLabel;
           actionBtn = `<button type="button" class="wizard-suggest-btn consult-btn" data-id="${v.id}" data-uhid="${escapeHtml(v.patient_uhid)}" data-name="${escapeHtml(v.patient_name || v.patient_uhid)}" data-source="${escapeHtml(v.source)}">${escapeHtml(label)}</button>`;
@@ -181,8 +191,21 @@
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
+          body: JSON.stringify({ status: "called" }),
+        });
+        loadQueue();
+      });
+    });
+
+    tbody.querySelectorAll(".start-consult-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await fetch(`/api/opd/visits/${btn.dataset.id}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
           body: JSON.stringify({ status: "in-consultation" }),
         });
+        openConsultation(btn.dataset.id, btn.dataset.uhid, btn.dataset.name, btn.dataset.source);
         loadQueue();
       });
     });

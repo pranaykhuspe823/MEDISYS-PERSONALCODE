@@ -515,6 +515,7 @@
   },
   "doctor_queue": {
     "start_consultation": "Start Consultation",
+    "start_consulting": "Start Consulting",
     "complete_visit": "Complete Visit",
     "call_patient": "Call",
     "consult": "Consult",
@@ -847,6 +848,7 @@
     "billing": "Billing & Invoices",
     "registration": "Registration",
     "opd_queue": "OPD Queue",
+    "queue_board": "Queue",
     "admission": "Admission",
     "opd_vitals": "OPD Vitals",
     "ward_bed": "Ward & Bed",
@@ -999,6 +1001,7 @@
     "completed": "Completed",
     "status_all": "All",
     "status_waiting": "Waiting",
+    "status_called": "Called",
     "status_in_consultation": "In Consultation",
     "status_completed": "Completed",
     "status_cancelled": "Cancelled",
@@ -1017,6 +1020,12 @@
     "token_issued": "Token #{token} issued. {confirmation}",
     "token_booked_toast": "Token #{token} booked for {name}.",
     "consulting_doctor": "Consulting Doctor"
+  },
+  "opd_queue": {
+    "title": "Live Queue",
+    "subtitle": "Every token issued today, updating live as doctors call and consult patients.",
+    "open_display_mode": "📺 Open Display Mode",
+    "display_mode_hint": "Display Mode opens a plain, TV-friendly token board with no menus — open it on a waiting-room screen and leave it running."
   },
   "pathology_queue": {
     "title": "Pathology Queue",

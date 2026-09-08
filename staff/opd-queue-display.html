@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MEDISYS - Queue Display</title>
+<style>
+  /* Fully self-contained — deliberately not linking style.css/admin.css.
+     This page runs unattended on a waiting-room TV: no header, no sidebar,
+     no footer, nothing clickable except the fullscreen toggle. See
+     staff/opd-queue-board.js's "Open Display Mode" link. */
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #eef2f7;
+    --surface: #ffffff;
+    --ink: #16213a;
+    --ink-mute: #6b7690;
+    --line: #e3e8f0;
+
+    --teal: #0f8f7d;
+    --teal-tint: #e6f6f2;
+    --navy: #1b2f6e;
+    --indigo: #4f5bd5;
+    --indigo-tint: #eceeff;
+    --gold: #b9791f;
+    --gold-tint: #fdf1dc;
+    --coral: #e2613f;
+    --coral-dark: #c24a2b;
+    --coral-tint: #fdeae3;
+
+    --shadow-sm: 0 2px 10px rgba(22, 33, 58, 0.06);
+    --shadow-md: 0 12px 32px rgba(22, 33, 58, 0.1);
+    --shadow-lg: 0 24px 60px rgba(226, 97, 63, 0.16);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  /* Soft ambient glow, purely decorative — keeps the white background from
+     feeling clinical/flat without adding any clutter. */
+  body::before, body::after {
+    content: "";
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(90px);
+    z-index: 0;
+    pointer-events: none;
+  }
+  body::before {
+    width: 46vw; height: 46vw;
+    top: -18vw; right: -14vw;
+    background: radial-gradient(circle, rgba(15, 143, 125, 0.14), transparent 70%);
+  }
+  body::after {
+    width: 40vw; height: 40vw;
+    bottom: -16vw; left: -12vw;
+    background: radial-gradient(circle, rgba(226, 97, 63, 0.10), transparent 70%);
+  }
+
+  .board {
+    position: relative;
+    z-index: 1;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 26px 44px 22px;
+  }
+
+  /* ---------- Top bar ---------- */
+  .board-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 22px;
+  }
+
+  .board-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .board-brand img {
+    height: 40px;
+    width: auto;
+    object-fit: contain;
+  }
+  .board-brand-text {
+    font-size: clamp(15px, 1.3vw, 19px);
+    font-weight: 700;
+    color: var(--ink-mute);
+    letter-spacing: 0.02em;
+  }
+  .board-brand-text strong { color: var(--navy); }
+
+  .board-clock {
+    font-family: 'Manrope', 'Inter', sans-serif;
+    font-size: clamp(22px, 2.3vw, 30px);
+    font-weight: 800;
+    color: var(--navy);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+  }
+
+  /* ---------- Now Calling hero strip ---------- */
+  .hero-section {
+    margin-bottom: 22px;
+  }
+  .hero-label {
+    font-size: clamp(12px, 1vw, 14px);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--coral-dark);
+    margin: 0 0 10px 2px;
+  }
+
+  .hero-cards {
+    display: flex;
+    gap: 18px;
+    overflow-x: auto;
+  }
+
+  .hero-card {
+    flex: 1 1 320px;
+    min-width: 300px;
+    background: var(--surface);
+    border-radius: 22px;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid rgba(226, 97, 63, 0.18);
+    padding: 22px 28px;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    position: relative;
+    overflow: hidden;
+    animation: heroPulse 2s ease-in-out infinite;
+  }
+  .hero-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 8px;
+    background: linear-gradient(180deg, var(--coral), var(--coral-dark));
+  }
+
+  @keyframes heroPulse {
+    0%, 100% { box-shadow: var(--shadow-lg); }
+    50% { box-shadow: 0 24px 70px rgba(226, 97, 63, 0.28); }
+  }
+
+  .hero-token {
+    font-family: 'Manrope', sans-serif;
+    font-size: clamp(40px, 4.4vw, 60px);
+    font-weight: 800;
+    color: var(--coral-dark);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hero-info { min-width: 0; flex: 1; }
+  .hero-patient {
+    font-size: clamp(19px, 1.9vw, 25px);
+    font-weight: 700;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hero-doctor {
+    margin-top: 3px;
+    font-size: clamp(13px, 1.1vw, 15px);
+    color: var(--ink-mute);
+    font-weight: 500;
+  }
+  .hero-pill {
+    flex-shrink: 0;
+    background: var(--coral);
+    color: #fff;
+    font-size: clamp(11px, 0.95vw, 13px);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 7px 16px;
+    border-radius: 999px;
+  }
+
+  .hero-empty {
+    background: var(--surface);
+    border: 1px dashed var(--line);
+    border-radius: 22px;
+    padding: 20px 28px;
+    color: var(--ink-mute);
+    font-size: clamp(14px, 1.2vw, 16px);
+    font-weight: 500;
+  }
+
+  /* ---------- Two-column body: In Consultation | Waiting ---------- */
+  .board-columns {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 22px;
+    min-height: 0;
+  }
+
+  .board-section {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .board-section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .board-section h2 {
+    margin: 0;
+    font-size: clamp(13px, 1.1vw, 15px);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-mute);
+    font-weight: 700;
+  }
+  .board-count {
+    font-family: 'Manrope', sans-serif;
+    font-size: clamp(13px, 1.1vw, 15px);
+    font-weight: 800;
+    color: var(--ink-mute);
+    background: var(--bg);
+    padding: 3px 12px;
+    border-radius: 999px;
+  }
+
+  .board-cards {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .token-card {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background: var(--indigo-tint);
+    border-radius: 16px;
+    padding: 14px 20px;
+  }
+
+  .token-number {
+    font-family: 'Manrope', sans-serif;
+    font-size: clamp(26px, 2.6vw, 36px);
+    font-weight: 800;
+    color: var(--indigo);
+    min-width: 1.5em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .token-info { flex: 1; min-width: 0; }
+  .token-patient {
+    font-size: clamp(16px, 1.4vw, 19px);
+    font-weight: 700;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .token-doctor {
+    font-size: clamp(12px, 1vw, 14px);
+    color: var(--ink-mute);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+  .token-status-pill {
+    flex-shrink: 0;
+    background: var(--indigo);
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: clamp(11px, 0.9vw, 13px);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .waiting-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .waiting-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--gold-tint);
+    border-radius: 12px;
+    padding: 12px 18px;
+  }
+  .waiting-row .token-number {
+    font-size: clamp(18px, 1.6vw, 22px);
+    min-width: auto;
+    color: var(--gold);
+  }
+  .waiting-row .token-patient {
+    font-size: clamp(14px, 1.2vw, 17px);
+    font-weight: 600;
+  }
+
+  .board-empty {
+    color: var(--ink-mute);
+    font-size: clamp(14px, 1.2vw, 17px);
+    padding: 30px 0;
+    text-align: center;
+  }
+
+  .fullscreen-btn {
+    position: fixed;
+    bottom: 18px;
+    right: 22px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink-mute);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    opacity: 0.4;
+    box-shadow: var(--shadow-sm);
+    transition: opacity 0.15s ease;
+  }
+  .fullscreen-btn:hover { opacity: 1; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+  <div class="board">
+    <div class="board-top">
+      <div class="board-brand">
+        <img src="../logo.png" alt="" />
+        <span class="board-brand-text" id="hospitalNameHeading">CORE5 <strong>MEDISYS</strong> — OPD Queue</span>
+      </div>
+      <div class="board-clock" id="boardClock"></div>
+    </div>
+
+    <div class="hero-section">
+      <p class="hero-label">Now Calling</p>
+      <div class="hero-cards" id="heroCards"></div>
+    </div>
+
+    <div class="board-columns">
+      <div class="board-section">
+        <div class="board-section-header">
+          <h2>In Consultation</h2>
+          <span class="board-count" id="consultingCount">0</span>
+        </div>
+        <div class="board-cards" id="consultingCards"></div>
+        <p class="board-empty" id="consultingEmptyState" hidden>No one in consultation right now.</p>
+      </div>
+
+      <div class="board-section">
+        <div class="board-section-header">
+          <h2>Waiting</h2>
+          <span class="board-count" id="waitingCount">0</span>
+        </div>
+        <div class="waiting-list" id="waitingList"></div>
+        <p class="board-empty" id="waitingEmptyState" hidden>No one waiting.</p>
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="fullscreen-btn" id="fullscreenBtn">⛶ Fullscreen</button>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="../realtime-client.js"></script>
+<script src="opd-queue-display.js"></script>
+</body>
+</html>
