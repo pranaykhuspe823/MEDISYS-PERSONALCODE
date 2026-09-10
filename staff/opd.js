@@ -333,6 +333,23 @@
     if (!user) return;
     wireLogout();
     wireSearch();
+
+    // Deep-link from staff/patient-checkin.js's "Add to Today's OPD Queue"
+    // quick link — pre-selects the patient exactly as if staff had searched
+    // and clicked their result, so Check-In → OPD doesn't force a re-search
+    // for someone already just identified.
+    const urlParams = new URLSearchParams(window.location.search);
+    const deepLinkUhid = urlParams.get("uhid");
+    const deepLinkName = urlParams.get("name");
+    if (deepLinkUhid) {
+      selectedPatient = { uhid: deepLinkUhid, fullName: deepLinkName || deepLinkUhid };
+      const hintText = window.i18n
+        ? window.i18n.t("opd.selected_patient_hint", { name: selectedPatient.fullName, uhid: selectedPatient.uhid })
+        : `Selected: ${selectedPatient.fullName} (${selectedPatient.uhid})`;
+      document.getElementById("selectedPatientHint").textContent = hintText;
+      document.getElementById("bookingSection").hidden = false;
+    }
+
     loadQueue();
     loadNeedsAdmission();
     loadWardPatients();

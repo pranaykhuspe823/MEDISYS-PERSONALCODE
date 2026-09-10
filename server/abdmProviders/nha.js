@@ -204,9 +204,32 @@ async function verifyLoginOtp(txnId, otp, identifierType) {
     throw err;
   }
 
+  // Authorization here must stay the GATEWAY session token (the same
+  // `token` every other call in this file uses to authenticate MEDISYS
+  // itself to ABDM) — xToken (the patient-specific token verifyRes.json()
+  // just returned) only ever goes in the separate X-token header, which
+  // identifies WHICH patient's account to fetch. This was passing xToken
+  // as BOTH — wrong credential in Authorization — and produced a real,
+  // reproducible "900900: Unclassified Authentication Failure" every time,
+  // confirmed live, 2026-09-09 (multiple attempts, always failing at this
+  // exact call after OTP verification itself succeeded cleanly). That fix
+  // moved the failure from a generic "900900 unclassified" to a specific
+  // "ABDM-1094 X-token expired" (401). Tried dropping the "Bearer " prefix
+  // next, guessing X-token might not follow the Authorization header's
+  // convention — wrong: that made it "Invalid X-token" (400) instead, and
+  // public ABDM API references confirm "X-token: Bearer <token>" (with the
+  // prefix) is the documented shape. Reverted to that. The real open
+  // question is the genuine-looking expiry itself — this call fires
+  // immediately after a successful verify with no meaningful delay in our
+  // code, so if it's still rejected as expired, that points at something
+  // other than elapsed time (e.g. a clock-sync/TIMESTAMP issue, or the
+  // gateway `token` used for Authorization here being a stale cached one —
+  // see getSessionToken()'s cache — rather than freshly issued alongside
+  // this xToken). Needs a live retry to see if this alone was the last
+  // piece, or whether the "expired" message needs investigating further.
   const accountRes = await fetch(`${ABHA_BASE_URL}/v3/profile/account`, {
     method: "GET",
-    headers: abhaHeaders(xToken, { "X-token": `Bearer ${xToken}` }),
+    headers: abhaHeaders(token, { "X-token": `Bearer ${xToken}` }),
   });
   if (!accountRes.ok) {
     throw new Error(`ABDM profile fetch failed (${accountRes.status}): ${await safeText(accountRes)}`);
@@ -243,24 +266,131 @@ async function verifyEnrollmentOtp(txnId, otp, mobile) {
   const publicKey = await getPublicCertificate();
   const encryptedOtp = encryptWithPublicKey(otp, publicKey);
 
+  // This is the SAME ABDM endpoint as verifyBio() below (byAadhaar,
+  // swapping authMethods "otp" for "bio"), but the two auth methods don't
+  // share an identical envelope — bio's flow (confirmed by live probing)
+  // never needs a mobile field at all; otp's does. consent needing to be a
+  // top-level {code, version} object (not a flat consentCode string) is
+  // shared between both and was confirmed live, 2026-09-09 — the very next
+  // attempt after fixing it no longer had consent in the rejection.
+  //
+  // mobile took two more (wrong) guesses to place correctly: top-level
+  // plain, then top-level RSA-encrypted, both still rejected as "Invalid
+  // Mobile Number" — turned out the validator wasn't even reading a
+  // top-level field under any encoding (confirmed by testing four
+  // different top-level variants that all produced the byte-identical
+  // error). Structurally probing every remaining placement (dummy txnId/
+  // otp, real public cert) pinned it down: PLAIN digits, nested inside
+  // authData.otp — i.e. exactly where this file originally had it before
+  // an earlier fix moved it out. "mobile" disappeared from the rejection
+  // the moment it went back there, leaving only the (expected, since the
+  // txnId/otp in that probe were dummy values) "Invalid Transaction Id".
+  // mobile is REQUIRED here (this becomes the new ABHA's registered
+  // contact number) — the caller must supply a real one, not the empty
+  // phone field a fresh registration form starts with.
+  if (!mobile) {
+    const err = new Error("A mobile number is required to create a new ABHA.");
+    err.code = "PROVIDER_ERROR";
+    throw err;
+  }
   const res = await fetch(`${ABHA_BASE_URL}/v3/enrollment/enrol/byAadhaar`, {
     method: "POST",
     headers: abhaHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify({
+      consent: { code: "abha-enrollment", version: "1.4" },
       authData: {
         authMethods: ["otp"],
-        otp: { txnId, otpValue: encryptedOtp, mobile: mobile || undefined },
+        otp: { txnId, otpValue: encryptedOtp, mobile },
       },
-      consentCode: "abha-enrollment",
     }),
   });
   if (!res.ok) {
+    const detail = await safeText(res);
     if (res.status === 401 || res.status === 400) {
+      // Was throwing INVALID_OTP here with no console.error at all, unlike
+      // every other verify path in this file — the real ABDM rejection
+      // reason (often something other than a genuinely wrong OTP; e.g. a
+      // scope/consent mismatch) was silently discarded. Fixed 2026-09-09
+      // while chasing exactly this blind spot.
+      console.error(`ABDM enrollment verify rejected (${res.status}): ${detail}`);
       const err = new Error("Invalid or expired OTP.");
       err.code = "INVALID_OTP";
       throw err;
     }
-    throw new Error(`ABDM enrollment verify failed (${res.status}): ${await safeText(res)}`);
+    throw new Error(`ABDM enrollment verify failed (${res.status}): ${detail}`);
+  }
+  const data = await res.json();
+  return normalizeProfile(data.ABHAProfile || data);
+}
+
+// ---------- Fingerprint (Mantra MFS110) enrollment ----------
+// FIXED 2026-09-09 — the previous version of this function (aadhaarNumber +
+// consent + authData.bioDto.fingerPrintAuthPid, no txnId) was a reverse-
+// engineered guess and was WRONG. It happened to occasionally get past
+// ABDM's gateway-level checks (real bridge auth, valid session token, valid
+// consent object) but always failed at the actual bio-match step with the
+// generic content-validation error `{"bioDto":"Invalid Aadhaar bio
+// request"}` — which looked exactly like "wrong finger/wrong Aadhaar" and
+// was misdiagnosed as that at first. It's actually a wrong ENVELOPE: ABDM's
+// official ABHA V3 API Integrator Guide (section 11.2 "Create ABHA via
+// Biometric", sandboxcms.abdm.gov.in) documents biometric enrollment as
+// the SAME two-step txnId flow as OTP enrollment (see requestEnrollmentOtp
+// + verifyEnrollmentOtp above), not a one-shot call:
+//   Step 1: POST /v3/enrollment/request/otp with the Aadhaar (RSA-encrypted)
+//           — same call requestEnrollmentOtp() below already makes for the
+//           Aadhaar-OTP path. This is required even for bio auth (it
+//           anchors the transaction and DOES send a real OTP SMS to the
+//           Aadhaar-linked mobile as a side effect — unused here, the
+//           fingerprint scan replaces entering that OTP).
+//   Step 2: POST /v3/enrollment/enrol/byAadhaar with:
+//     { authData: { authMethods: ["bio"],
+//                    bio: { timeStamp, txnId, fingerPrintAuthPid, mobile } },
+//       consent: { code: "abha-enrollment", version: "1.4" } }
+//   — key is "bio", NOT "bioDto"; no aadhaarNumber field at all (the
+//   Aadhaar was already consumed by step 1's txnId); timeStamp and a plain
+//   "mobile" (the ABHA's primary contact number) are BOTH required
+//   alongside fingerPrintAuthPid, mirroring the OTP variant's shape exactly
+//   (see verifyEnrollmentOtp above — same consent object, same endpoint,
+//   only authMethods/the inner object differ).
+async function verifyBio(aadhaarNumber, mobile, pidXml) {
+  if (!mobile) {
+    const err = new Error("A mobile number is required to verify via fingerprint.");
+    err.code = "PROVIDER_ERROR";
+    throw err;
+  }
+
+  const { txnId } = await requestEnrollmentOtp(aadhaarNumber);
+
+  const token = await getSessionToken();
+  const base64PidXml = Buffer.from(pidXml, "utf8").toString("base64");
+  const timeStamp = new Date().toISOString().slice(0, 19).replace("T", " ");
+
+  const res = await fetch(`${ABHA_BASE_URL}/v3/enrollment/enrol/byAadhaar`, {
+    method: "POST",
+    headers: abhaHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      consent: { code: "abha-enrollment", version: "1.4" },
+      authData: {
+        authMethods: ["bio"],
+        bio: { timeStamp, txnId, fingerPrintAuthPid: base64PidXml, mobile },
+      },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await safeText(res);
+    if (res.status === 400 || res.status === 401) {
+      console.error(`ABDM biometric enrollment rejected (${res.status}): ${detail}`);
+      const err = new Error("Fingerprint didn't match or capture invalid.");
+      err.code = "PROVIDER_ERROR";
+      throw err;
+    }
+    if (res.status === 404) {
+      console.error(`ABDM biometric enrollment: Aadhaar not found (${res.status}): ${detail}`);
+      const err = new Error("This Aadhaar number isn't recognized by ABDM.");
+      err.code = "NOT_FOUND";
+      throw err;
+    }
+    throw new Error(`ABDM biometric enrollment failed (${res.status}): ${detail}`);
   }
   const data = await res.json();
   return normalizeProfile(data.ABHAProfile || data);
@@ -300,4 +430,5 @@ module.exports = {
   verifyLoginOtp,
   requestEnrollmentOtp,
   verifyEnrollmentOtp,
+  verifyBio,
 };

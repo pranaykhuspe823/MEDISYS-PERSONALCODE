@@ -35,6 +35,25 @@ async function verifyEnrollmentOtp(_txnId, otp, _mobile) {
   return mockProfile({ newlyCreated: true });
 }
 
+async function verifyBio(aadhaarNumber, mobile, pidXml) {
+  if (typeof pidXml !== "string" || !pidXml.includes("<PidData")) {
+    const err = new Error("Invalid fingerprint capture data.");
+    err.code = "PROVIDER_ERROR";
+    throw err;
+  }
+  if (!mobile) {
+    const err = new Error("A mobile number is required to verify via fingerprint.");
+    err.code = "PROVIDER_ERROR";
+    throw err;
+  }
+  if (/0{9}$/.test(aadhaarNumber)) {
+    const err = new Error("No ABHA account found for this identifier.");
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  return mockProfile({ authMethod: "bio", mobile });
+}
+
 function assertOtp(otp) {
   if (String(otp) !== "111111") {
     const err = new Error("Invalid OTP. (Mock mode always uses 111111.)");
@@ -64,4 +83,5 @@ module.exports = {
   verifyLoginOtp,
   requestEnrollmentOtp,
   verifyEnrollmentOtp,
+  verifyBio,
 };

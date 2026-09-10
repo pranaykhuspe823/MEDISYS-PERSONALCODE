@@ -66,6 +66,12 @@
       clock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>`,
       queue: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="9" r="2.6"/><path d="M2.5 20c0-3.3 2.6-5.6 5.5-5.6s5.5 2.3 5.5 5.6M14.5 14.9c2.4.2 4.5 2.3 4.5 5.1"/></svg>`,
       admission: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5a3 3 0 0 0 6 0V3"/><path d="M12 11v4a5 5 0 0 0 10 0v-2"/><circle cx="21" cy="10" r="1.6"/></svg>`,
+      // Same icon set as portal-ui.js's sidebar nav (see navItemsForRole's
+      // receptionist entry) — add_person for Check-In, records for the OPD
+      // Registrations dashboard, kept visually consistent between sidebar
+      // and these dashboard cards.
+      add_person: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3.6 2.9-6 5.5-6s5.5 2.4 5.5 6"/><path d="M18 8v6M15 11h6"/></svg>`,
+      records: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M8 13h2l1.5-3 2 6 1.5-3H16"/></svg>`,
     };
 
     function actionCard(href, iconKey, label, hint) {
@@ -77,9 +83,17 @@
     }
 
     if (role === "receptionist") {
+      // Mirrors the full receptionist sidebar (portal-ui.js's
+      // navItemsForRole) — was only Registration/OPD/Admission here, out of
+      // sync with the 7-item sidebar added alongside Check-In, Create ABHA,
+      // OPD Registrations, and the Queue board, same order as the sidebar.
       actionCards.innerHTML =
+        actionCard("patient-checkin.html", "add_person", t("navigation.checkin", "Check-In"), t("dashboard.card_checkin_hint", "Look up a returning patient by ABHA and jump straight to their queue or billing")) +
+        actionCard("abha-creation.html", "registration", t("navigation.create_abha", "Create ABHA"), t("dashboard.card_create_abha_hint", "Create a brand-new ABHA ID via Aadhaar — no hospital registration needed")) +
         actionCard("registration.html", "registration", t("navigation.registration", "Patient Registration"), t("dashboard.card_reg_hint", "Search existing patients or register a new one")) +
         actionCard("opd.html", "calendar", t("opd.title", "OPD Booking & Queue"), t("dashboard.card_opd_hint", "Book an appointment, issue a walk-in token, view today's queue")) +
+        actionCard("opd-registrations.html", "records", t("navigation.opd_registrations", "Registrations"), t("dashboard.card_opd_reg_hint", "Every patient registered today, with their ABHA verification method")) +
+        actionCard("opd-queue-board.html", "queue", t("navigation.queue_board", "Queue"), t("dashboard.card_queue_board_hint", "Live token queue board for today's OPD visits")) +
         actionCard("ipd-admission.html", "admission", t("navigation.admission", "Admission Request"), t("dashboard.card_adm_hint", "Start a direct IPD admission for a patient"));
     } else if (role === "nurse") {
       actionCards.innerHTML =

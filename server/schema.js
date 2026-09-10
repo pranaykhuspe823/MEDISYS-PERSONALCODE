@@ -111,6 +111,16 @@ async function ensureSchema(connection, { seedDefaults = true } = {}) {
   await ensureColumn(connection, "patients", "abha_address", "VARCHAR(100) NULL");
   await ensureColumn(connection, "patients", "abha_verified", "TINYINT(1) NOT NULL DEFAULT 0");
   await ensureColumn(connection, "patients", "abha_link_status", "VARCHAR(20) NULL");
+  // Which ABHA lookup method (if any) actually succeeded at registration —
+  // 'manual' (no ABHA verification used), 'mobile_otp', 'aadhaar_otp',
+  // 'fingerprint' (any one of these three from staff/patient-checkin.html,
+  // which only ever completes one method), or 'all_three' (from
+  // staff/registration.html, which requires all three in sequence before
+  // registration is allowed at all). Set from the hidden
+  // #abhaVerificationMethod field, defaulting to 'manual'; see the OPD
+  // registrations dashboard (staff/opd-registrations.html) for where this
+  // is surfaced.
+  await ensureColumn(connection, "patients", "abha_verification_method", "VARCHAR(20) NOT NULL DEFAULT 'manual'");
   // Same import-overflow column as hospitals.extra_fields above.
   await ensureColumn(connection, "patients", "extra_fields", "JSON NULL");
 

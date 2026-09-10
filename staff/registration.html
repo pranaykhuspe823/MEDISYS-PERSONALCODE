@@ -33,23 +33,76 @@
     <h2 class="portal-section-title" data-i18n="registration.new_patient">+ New Patient</h2>
 
     <div class="portal-card abha-fetch-card">
-      <h3 class="abha-fetch-title">🆔 Fetch via ABHA</h3>
-      <p class="wizard-hint">Look up the patient's existing ABHA (Ayushman Bharat Health Account) to auto-fill their details below, or create a new ABHA if they don't have one yet.</p>
+      <h3 class="abha-fetch-title">Fetch via ABHA</h3>
+      <p class="wizard-hint">Look up the patient's existing ABHA (Ayushman Bharat Health Account) to auto-fill their details below &mdash; fill in whichever ONE of the three options below applies, then fetch. No need to pick a mode first; all three are always available here, same as the Create ABHA page.</p>
 
-      <div class="abha-toggle-row" role="radiogroup" aria-label="ABHA lookup identifier type">
-        <label class="abha-toggle-option">
-          <input type="radio" name="abhaIdType" value="mobile" id="abhaTypeMobile" checked />
-          Mobile Number
-        </label>
-        <label class="abha-toggle-option">
-          <input type="radio" name="abhaIdType" value="aadhaar" id="abhaTypeAadhaar" />
-          Aadhaar Number
-        </label>
+      <!-- All three lookup methods are always visible (no toggle that swaps
+           which fields are shown) — mirrors staff/abha-creation.html's
+           layout, and avoids the earlier radio-toggle UX that read as
+           several different "portals" swapping in and out. Staff fill in
+           exactly ONE block's field(s), leave the other two blank, then use
+           the single common "Fetch Details" button below all three — it
+           looks at which one block has data and routes to that method. -->
+      <div class="abha-step">
+        <h4 class="abha-step-title"><span class="abha-step-number">1</span> Mobile Number</h4>
+        <input type="text" id="abhaMobileInput" maxlength="10" inputmode="numeric" placeholder="Enter 10-digit mobile number" />
       </div>
 
+      <!-- Aadhaar Number goes through the same ABDM enrollment call
+           (enrol/byAadhaar) as staff/abha-creation.html, not a separate
+           login/OTP call — that endpoint has proven reliably working where
+           the login one hasn't, and it returns full details either way
+           (existing account or newly created), matching Create ABHA's own
+           behavior exactly. That call requires a mobile number alongside
+           the OTP verify step, same as Create ABHA. -->
+      <div class="abha-step">
+        <h4 class="abha-step-title"><span class="abha-step-number">2</span> Aadhaar Number</h4>
+        <label for="abhaAadhaarInput">Aadhaar Number</label>
+        <input type="text" id="abhaAadhaarInput" maxlength="12" inputmode="numeric" placeholder="12-digit Aadhaar number" />
+        <label for="abhaAadhaarMobileInput">Mobile Number (required by ABDM for this lookup)</label>
+        <input type="text" id="abhaAadhaarMobileInput" maxlength="10" inputmode="numeric" placeholder="10-digit mobile number" />
+      </div>
+
+      <div class="abha-step">
+        <h4 class="abha-step-title"><span class="abha-step-number">3</span> Fingerprint (MFS110)</h4>
+        <label for="abhaBioAadhaarInput">Aadhaar number to verify against the scanned fingerprint</label>
+        <input type="text" id="abhaBioAadhaarInput" maxlength="12" inputmode="numeric" placeholder="12-digit Aadhaar number" />
+        <!-- ABDM's biometric enrollment call requires a primary mobile
+             number alongside the fingerprint (same requirement as the
+             Aadhaar Number option above) — see the fix note on
+             abdmProviders/nha.js's verifyBio(), 2026-09-09. -->
+        <label for="abhaBioMobileInput">Mobile Number (required by ABDM for this lookup)</label>
+        <input type="text" id="abhaBioMobileInput" maxlength="10" inputmode="numeric" placeholder="10-digit mobile number" />
+        <p class="wizard-hint" id="abhaBioDeviceStatus">Checking for the Mantra RD Service&hellip;</p>
+        <div id="abhaBioCaptureResult" class="abha-bio-capture-result" hidden>
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true">
+            <path d="M17.81 4.47a.5.5 0 0 1-.23-.06C15.66 3.42 14 3 12.01 3c-1.98 0-3.86.47-5.57 1.41a.5.5 0 0 1-.48-.88C7.82 2.52 9.86 2 12.01 2c2.13 0 3.99.47 6.03 1.52a.5.5 0 0 1-.23.95ZM3.5 9.72a.5.5 0 0 1-.29-.09.5.5 0 0 1-.12-.7c.99-1.4 2.25-2.5 3.75-3.27 3.14-1.62 7.16-1.63 10.31-.01 1.5.77 2.76 1.86 3.75 3.25a.5.5 0 0 1-.82.58c-.9-1.26-2.04-2.25-3.39-2.94-2.87-1.47-6.54-1.47-9.4.01-1.36.7-2.5 1.7-3.4 2.96a.5.5 0 0 1-.39.21Zm6.25 12.07a.5.5 0 0 1-.35-.15c-.87-.87-1.34-1.43-2.01-2.64-.69-1.23-1.05-2.73-1.05-4.34 0-2.97 2.54-5.39 5.66-5.39s5.66 2.42 5.66 5.39a.5.5 0 0 1-1 0c0-2.42-2.09-4.39-4.66-4.39-2.57 0-4.66 1.97-4.66 4.39 0 1.44.32 2.77.93 3.85.64 1.15 1.08 1.64 1.85 2.42a.5.5 0 0 1-.37.86Zm7.17-1.85c-1.19 0-2.24-.3-3.1-.89-1.49-1.01-2.38-2.65-2.38-4.39a.5.5 0 0 1 1 0c0 1.41.72 2.74 1.94 3.56.71.48 1.54.71 2.54.71.24 0 .64-.03 1.04-.1a.5.5 0 1 1 .17.99c-.57.11-1.07.12-1.21.12ZM14.91 22a.5.5 0 0 1-.13-.02c-1.59-.44-2.63-1.03-3.72-2.1-1.4-1.39-2.17-3.24-2.17-5.22 0-1.62 1.38-2.94 3.08-2.94 1.7 0 3.08 1.32 3.08 2.94 0 1.07.93 1.94 2.08 1.94s2.08-.87 2.08-1.94c0-3.77-3.25-6.83-7.25-6.83-2.84 0-5.44 1.58-6.61 4.03-.39.81-.59 1.76-.59 2.8 0 .78.07 2.01.67 3.61a.5.5 0 1 1-.93.36c-.49-1.31-.73-2.61-.73-3.96 0-1.2.23-2.29.68-3.24 1.33-2.79 4.28-4.6 7.51-4.6 4.55 0 8.25 3.51 8.25 7.83 0 1.62-1.38 2.94-3.08 2.94s-3.08-1.32-3.08-2.94c0-1.07-.93-1.94-2.08-1.94s-2.08.87-2.08 1.94c0 1.71.66 3.31 1.87 4.51.95.94 1.86 1.46 3.27 1.85a.5.5 0 0 1-.12.98Z" />
+          </svg>
+          <span id="abhaBioQualityText"></span>
+        </div>
+        <p class="wizard-hint" style="color:#a15c00;">&#9888; Requires the Mantra RD Service running on this machine with an MFS110 scanner plugged in. This <strong>verifies</strong> the Aadhaar number above against the scanned fingerprint &mdash; it does not search for who the fingerprint belongs to. The quality indicator confirms a scan was taken cleanly; the actual fingerprint image is never shown here &mdash; UIDAI's RD Service encrypts it at capture so only ABDM can ever read it, not MEDISYS or any other app.</p>
+        <p class="wizard-hint" style="color:#a15c00;">&#9888; This browser tab must open MEDISYS as <strong>http://localhost:&lt;port&gt;</strong> on the same PC the MFS110 is plugged into &mdash; not a LAN IP, a domain, or a remote desk.</p>
+        <details class="abha-bio-troubleshoot">
+          <summary>Fingerprint scanner not working? Checklist &#9662;</summary>
+          <ol>
+            <li><strong>Is RD Service installed and running?</strong> Check the Windows system tray for the Mantra RD Service icon, or open <code>http://127.0.0.1:11100/rd/info</code> directly in a browser tab &mdash; it should return XML, not a connection error.</li>
+            <li><strong>Is the MFS110 plugged in?</strong> Check Windows Device Manager for the device listed under a driver-related category with no warning icon.</li>
+            <li><strong>Are you on http://localhost, not a remote/LAN address?</strong> Fingerprint capture only works when the browser and RD Service are on the same machine.</li>
+            <li><strong>Still failing with "Failed to fetch" even though step 1 works?</strong> Ask whoever manages the MEDISYS server to confirm <code>http://127.0.0.1:11100</code> is present in the server's Content-Security-Policy <code>connect-src</code> list (server/server.js) &mdash; a missing entry there blocks every browser identically, with no visible error beyond this generic message.</li>
+            <li><strong>RD Service answers but the scanner's light never comes on?</strong> A capture request can reach RD Service fine (<code>errCode="700" errInfo="Capture timed out"</code> after 20s) without the light activating if the sensor itself has a driver/USB fault &mdash; reseat the USB connection or try a different port.</li>
+          </ol>
+        </details>
+      </div>
+
+      <!-- One common button for all three options above — fill in exactly
+           one block's field(s), leave the other two blank, then click this.
+           It figures out which block has data and runs that method's
+           fetch/verify (mobile OTP request, Aadhaar enrollment OTP
+           request, or a fingerprint capture+verify — the fingerprint path
+           has no separate txnId/OTP round-trip, so this button IS the scan
+           trigger for that case). -->
       <div class="wizard-suggest-row">
-        <input type="text" id="abhaIdentifierInput" placeholder="Enter mobile number" inputmode="numeric" />
-        <button type="button" class="wizard-suggest-btn" id="abhaFetchBtn">Fetch Details</button>
+        <button type="button" class="wizard-suggest-btn" id="abhaCommonFetchBtn">Fetch Details</button>
       </div>
 
       <div id="abhaOtpSection" class="abha-otp-section" hidden>
@@ -62,10 +115,10 @@
 
       <p class="form-error" id="abhaError" role="alert" aria-live="polite"></p>
 
-      <div id="abhaVerifiedBadge" class="abha-verified-badge" hidden>&#10003; Verified via ABHA</div>
+      <div id="abhaVerifiedBadge" class="abha-verified-badge" hidden>&#10003; Verified via ABHA &mdash; ready to register</div>
 
       <div id="abhaNotFound" class="abha-fallback" hidden>
-        <p><strong>No ABHA found for this identifier.</strong> MEDISYS does not create ABHA accounts on a patient's behalf &mdash; ask them to create their own, free, in a couple of minutes via the official ABHA app (Play Store / App Store) or <a href="https://abha.abdm.gov.in" target="_blank" rel="noopener">abha.abdm.gov.in</a>, using their mobile number or Aadhaar. Once they have it, either click "Fetch Details" again to pull it automatically, or type it straight into the ABHA Number / ABHA Address fields below.</p>
+        <p><strong>No ABHA found for this identifier.</strong> For a real patient, MEDISYS does not create ABHA accounts on their behalf &mdash; ask them to create their own, free, in a couple of minutes via the official ABHA app (Play Store / App Store), <a href="https://abha.abdm.gov.in" target="_blank" rel="noopener">abha.abdm.gov.in</a>, or the "Create ABHA" page in this portal. Once they have one, click "Fetch Details" again, or type it directly into the ABHA Number / ABHA Address fields below.</p>
         <button type="button" class="wizard-back-btn" id="abhaSandboxEnrollToggle">Sandbox testing only: create a test ABHA &#9662;</button>
         <div id="abhaEnrollSection" class="abha-otp-section" hidden>
           <p class="wizard-hint" style="color:#a15c00;">&#9888; For sandbox/dev testing only &mdash; never use this for a real patient. It creates a brand-new test ABHA, which would duplicate a person's real ABHA if they already have one.</p>
@@ -74,83 +127,112 @@
             <input type="text" id="abhaEnrollAadhaarInput" maxlength="12" inputmode="numeric" placeholder="12-digit Aadhaar number" />
             <button type="button" class="wizard-suggest-btn" id="abhaEnrollFetchBtn">Send OTP</button>
           </div>
+          <div id="abhaEnrollOtpSection" class="abha-otp-section" hidden>
+            <label for="abhaEnrollOtpInput">Enter the OTP sent to the Aadhaar-linked mobile</label>
+            <div class="wizard-suggest-row">
+              <input type="text" id="abhaEnrollOtpInput" maxlength="6" inputmode="numeric" placeholder="6-digit OTP" />
+              <button type="button" class="wizard-suggest-btn" id="abhaEnrollVerifyBtn">Verify</button>
+            </div>
+            <label for="abhaEnrollMobileInput">Mobile number for the new ABHA (required by ABDM)</label>
+            <input type="text" id="abhaEnrollMobileInput" maxlength="10" inputmode="numeric" placeholder="10-digit mobile number" />
+          </div>
+          <p class="form-error" id="abhaEnrollError" role="alert" aria-live="polite"></p>
         </div>
       </div>
     </div>
 
     <div class="portal-card">
-      <form id="patientForm" class="wizard-step" novalidate>
-        <label for="fullName" data-i18n="patient.full_name">Full Name *</label>
-        <input type="text" id="fullName" name="fullName" required />
+      <form id="patientForm" class="wizard-step patient-form" novalidate>
+        <div class="form-section">
+          <h3 class="form-section-title">Patient Details</h3>
+          <label for="fullName" data-i18n="patient.full_name">Full Name *</label>
+          <input type="text" id="fullName" name="fullName" required />
 
-        <label for="uhidCustom" data-i18n="patient.uhid">UHID</label>
-        <input type="text" id="uhidCustom" name="uhidCustom" placeholder="Leave blank to auto-generate (e.g. PAT-CHG-000001)" data-i18n-placeholder="registration.uhid_placeholder" />
+          <div class="wizard-grid wizard-grid-3">
+            <div>
+              <label for="dob" data-i18n="registration.dob">Date of Birth</label>
+              <input type="date" id="dob" name="dob" />
+            </div>
+            <div>
+              <label for="gender" data-i18n="patient.gender">Gender</label>
+              <select id="gender" name="gender">
+                <option value="" data-i18n="common.select">Select</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label for="phone" data-i18n="registration.phone">Phone</label>
+              <input type="text" id="phone" name="phone" />
+            </div>
+          </div>
 
-        <label for="patientPasswordCustom" data-i18n="registration.portal_password">Patient Portal Password</label>
-        <div class="wizard-suggest-row">
-          <input type="text" id="patientPasswordCustom" placeholder="Leave blank to auto-generate" data-i18n-placeholder="registration.password_placeholder" />
-          <button type="button" class="wizard-suggest-btn" id="suggestPatientPasswordBtn" data-i18n="registration.suggest">Suggest</button>
-        </div>
-        <p class="wizard-hint" data-i18n="registration.password_hint">This lets the patient log in to their own portal using their UHID and this password.</p>
-
-        <div class="wizard-grid">
-          <div>
-            <label for="dob" data-i18n="registration.dob">Date of Birth</label>
-            <input type="date" id="dob" name="dob" />
-          </div>
-          <div>
-            <label for="gender" data-i18n="patient.gender">Gender</label>
-            <select id="gender" name="gender">
-              <option value="" data-i18n="common.select">Select</option>
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div>
-            <label for="phone" data-i18n="registration.phone">Phone</label>
-            <input type="text" id="phone" name="phone" />
-          </div>
+          <label for="address" data-i18n="registration.address">Address</label>
+          <input type="text" id="address" name="address" />
         </div>
 
-        <label for="address" data-i18n="registration.address">Address</label>
-        <input type="text" id="address" name="address" />
-
-        <div class="wizard-grid">
-          <div>
-            <label for="emergencyContactName" data-i18n="registration.emergency_name">Emergency Contact Name</label>
-            <input type="text" id="emergencyContactName" name="emergencyContactName" />
+        <div class="form-section">
+          <h3 class="form-section-title">Patient Portal Access</h3>
+          <label for="uhidCustom" data-i18n="patient.uhid">UHID</label>
+          <div class="wizard-suggest-row">
+            <input type="text" id="uhidCustom" name="uhidCustom" placeholder="Leave blank to auto-generate (e.g. PAT-CHG-000001)" data-i18n-placeholder="registration.uhid_placeholder" />
+            <button type="button" class="wizard-suggest-btn" id="suggestUhidBtn" data-i18n="registration.suggest">Suggest</button>
           </div>
-          <div>
-            <label for="emergencyContactPhone" data-i18n="registration.emergency_phone">Emergency Contact Phone</label>
-            <input type="text" id="emergencyContactPhone" name="emergencyContactPhone" />
+
+          <label for="patientPasswordCustom" data-i18n="registration.portal_password">Patient Portal Password</label>
+          <div class="wizard-suggest-row">
+            <input type="text" id="patientPasswordCustom" placeholder="Leave blank to auto-generate" data-i18n-placeholder="registration.password_placeholder" />
+            <button type="button" class="wizard-suggest-btn" id="suggestPatientPasswordBtn" data-i18n="registration.suggest">Suggest</button>
+          </div>
+          <p class="wizard-hint" data-i18n="registration.password_hint">This lets the patient log in to their own portal using their UHID and this password.</p>
+        </div>
+
+        <div class="form-section">
+          <h3 class="form-section-title">Emergency Contact</h3>
+          <div class="wizard-grid">
+            <div>
+              <label for="emergencyContactName" data-i18n="registration.emergency_name">Emergency Contact Name</label>
+              <input type="text" id="emergencyContactName" name="emergencyContactName" />
+            </div>
+            <div>
+              <label for="emergencyContactPhone" data-i18n="registration.emergency_phone">Emergency Contact Phone</label>
+              <input type="text" id="emergencyContactPhone" name="emergencyContactPhone" />
+            </div>
           </div>
         </div>
 
-        <div class="wizard-grid">
-          <div>
-            <label for="abhaId">ABHA Number</label>
-            <input type="text" id="abhaId" name="abhaId" placeholder="Optional &mdash; fetch above, or type it if the patient already has one" />
+        <div class="form-section">
+          <h3 class="form-section-title">ABHA (Manual Entry)</h3>
+          <div class="wizard-grid">
+            <div>
+              <label for="abhaId">ABHA Number</label>
+              <input type="text" id="abhaId" name="abhaId" placeholder="Optional &mdash; fetch above, or type it if the patient already has one" />
+            </div>
+            <div>
+              <label for="abhaAddress">ABHA Address</label>
+              <input type="text" id="abhaAddress" name="abhaAddress" placeholder="e.g. patient@abdm" />
+            </div>
           </div>
-          <div>
-            <label for="abhaAddress">ABHA Address</label>
-            <input type="text" id="abhaAddress" name="abhaAddress" placeholder="e.g. patient@abdm" />
-          </div>
+          <p class="wizard-hint" id="abhaFieldsHint">Auto-filled by "Fetch via ABHA" above, or type it directly if the patient can show you their existing ABHA card/app. Manually typed ABHA numbers are saved as unverified until fetched via OTP.</p>
+          <input type="hidden" id="abhaVerificationMethod" name="abhaVerificationMethod" value="manual" />
         </div>
-        <p class="wizard-hint" id="abhaFieldsHint">Auto-filled by "Fetch via ABHA" above, or type it directly if the patient can show you their existing ABHA card/app. Manually typed ABHA numbers are saved as unverified until fetched via OTP.</p>
 
-        <label for="category" data-i18n="registration.category">Patient Category</label>
-        <select id="category" name="category">
-          <option value="walk-in" data-i18n="registration.walk_in">Walk-in</option>
-          <option value="referral" data-i18n="registration.referral">Referral</option>
-          <option value="insurance" data-i18n="registration.insurance">Insurance</option>
-          <option value="corporate" data-i18n="registration.corporate">Corporate</option>
-        </select>
+        <div class="form-section">
+          <h3 class="form-section-title">Category &amp; Submit</h3>
+          <label for="category" data-i18n="registration.category">Patient Category</label>
+          <select id="category" name="category">
+            <option value="walk-in" data-i18n="registration.walk_in">Walk-in</option>
+            <option value="referral" data-i18n="registration.referral">Referral</option>
+            <option value="insurance" data-i18n="registration.insurance">Insurance</option>
+            <option value="corporate" data-i18n="registration.corporate">Corporate</option>
+          </select>
 
-        <p class="form-error" id="patientFormError" role="alert" aria-live="polite"></p>
+          <p class="form-error" id="patientFormError" role="alert" aria-live="polite"></p>
 
-        <div class="wizard-nav">
-          <button type="submit" class="login-btn wizard-next-btn" id="submitPatientBtn" data-i18n="registration.register_patient">Register Patient</button>
+          <div class="wizard-nav">
+            <button type="submit" class="login-btn wizard-next-btn" id="submitPatientBtn" data-i18n="registration.register_patient">Register Patient</button>
+          </div>
         </div>
       </form>
 
@@ -189,6 +271,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="../realtime-client.js"></script>
   <script src="../portal-ui.js"></script>
+  <script src="../rd-service-client.js"></script>
 <script src="registration.js"></script>
 </body>
 </html>

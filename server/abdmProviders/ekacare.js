@@ -165,6 +165,20 @@ async function verifyEnrollmentOtp(txnId, otp, mobile) {
   return normalizeProfile({ ...rawProfile, newlyCreated: true });
 }
 
+// ---------- Fingerprint (Mantra MFS110) verification — not supported ----------
+// Eka Care's documented Connect API
+// (https://developer.eka.care/api-reference/user-app/abdm-connect) only
+// exposes OTP-based login and Aadhaar-OTP enrollment — no biometric/
+// fingerprint auth method. Fail loudly rather than guess at an endpoint
+// that isn't in their docs.
+async function verifyBio(_aadhaarNumber, _mobile, _pidXml) {
+  const err = new Error(
+    "Biometric (fingerprint) ABHA verification isn't supported via Eka Care's documented API. Switch ABDM_PROVIDER=nha for fingerprint auth, or fall back to manual/OTP registration."
+  );
+  err.code = "PROVIDER_ERROR";
+  throw err;
+}
+
 // ---------- Helpers ----------
 function normalizeProfile(raw) {
   const dob =
@@ -199,4 +213,5 @@ module.exports = {
   verifyLoginOtp,
   requestEnrollmentOtp,
   verifyEnrollmentOtp,
+  verifyBio,
 };

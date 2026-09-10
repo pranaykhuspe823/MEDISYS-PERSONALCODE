@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MEDISYS - Patient Check-In</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="../admin/admin.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="brand">
+      <img src="../logo.png" alt="Core5 MEDISYS" class="brand-logo" />
+    </div>
+    <div class="portal-header-right">
+      <span class="portal-user" id="portalUser"></span>
+      <button type="button" class="portal-logout-btn" id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <main class="portal-main">
+    <a href="dashboard" class="forgot-link portal-back-link" data-i18n="registration.back_to_dashboard">&larr; Back to Dashboard</a>
+    <h1 data-i18n="checkin.title">Patient Check-In</h1>
+    <p class="portal-subtitle" data-i18n="checkin.subtitle">Verify the patient via ABHA to pull up their existing record, or start a new registration if they don't have one yet.</p>
+
+    <div class="portal-card abha-fetch-card">
+      <h3 class="abha-fetch-title" data-i18n="checkin.verify_title">Verify Patient</h3>
+      <p class="wizard-hint" data-i18n="checkin.verify_hint">Look up the patient by their ABHA (Ayushman Bharat Health Account) — Mobile/Aadhaar OTP or fingerprint.</p>
+
+      <div class="abha-toggle-row" role="radiogroup" aria-label="ABHA lookup identifier type">
+        <label class="abha-toggle-option">
+          <input type="radio" name="abhaIdType" value="mobile" id="abhaTypeMobile" checked />
+          Mobile Number
+        </label>
+        <label class="abha-toggle-option">
+          <input type="radio" name="abhaIdType" value="aadhaar" id="abhaTypeAadhaar" />
+          Aadhaar Number
+        </label>
+        <label class="abha-toggle-option">
+          <input type="radio" name="abhaIdType" value="biometric" id="abhaTypeBiometric" />
+          Fingerprint (MFS110)
+        </label>
+      </div>
+
+      <div id="abhaIdentifierRow" class="wizard-suggest-row">
+        <input type="text" id="abhaIdentifierInput" placeholder="Enter mobile number" inputmode="numeric" />
+        <button type="button" class="wizard-suggest-btn" id="abhaFetchBtn">Fetch Details</button>
+      </div>
+
+      <div id="abhaOtpSection" class="abha-otp-section" hidden>
+        <label for="abhaOtpInput">Enter the OTP sent to the registered mobile</label>
+        <div class="wizard-suggest-row">
+          <input type="text" id="abhaOtpInput" maxlength="6" inputmode="numeric" placeholder="6-digit OTP" />
+          <button type="button" class="wizard-suggest-btn" id="abhaVerifyBtn">Verify</button>
+        </div>
+      </div>
+
+      <div id="abhaBioSection" class="abha-otp-section" hidden>
+        <label for="abhaBioAadhaarInput">Aadhaar number to verify against the scanned fingerprint</label>
+        <div class="wizard-suggest-row">
+          <input type="text" id="abhaBioAadhaarInput" maxlength="12" inputmode="numeric" placeholder="12-digit Aadhaar number" />
+        </div>
+        <p class="wizard-hint" id="abhaBioDeviceStatus">Checking for the Mantra RD Service&hellip;</p>
+        <div class="wizard-suggest-row">
+          <button type="button" class="wizard-suggest-btn" id="abhaBioScanBtn" disabled>Scan Fingerprint</button>
+        </div>
+        <div id="abhaBioCaptureResult" class="abha-bio-capture-result" hidden>
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true">
+            <path d="M17.81 4.47a.5.5 0 0 1-.23-.06C15.66 3.42 14 3 12.01 3c-1.98 0-3.86.47-5.57 1.41a.5.5 0 0 1-.48-.88C7.82 2.52 9.86 2 12.01 2c2.13 0 3.99.47 6.03 1.52a.5.5 0 0 1-.23.95ZM3.5 9.72a.5.5 0 0 1-.29-.09.5.5 0 0 1-.12-.7c.99-1.4 2.25-2.5 3.75-3.27 3.14-1.62 7.16-1.63 10.31-.01 1.5.77 2.76 1.86 3.75 3.25a.5.5 0 0 1-.82.58c-.9-1.26-2.04-2.25-3.39-2.94-2.87-1.47-6.54-1.47-9.4.01-1.36.7-2.5 1.7-3.4 2.96a.5.5 0 0 1-.39.21Zm6.25 12.07a.5.5 0 0 1-.35-.15c-.87-.87-1.34-1.43-2.01-2.64-.69-1.23-1.05-2.73-1.05-4.34 0-2.97 2.54-5.39 5.66-5.39s5.66 2.42 5.66 5.39a.5.5 0 0 1-1 0c0-2.42-2.09-4.39-4.66-4.39-2.57 0-4.66 1.97-4.66 4.39 0 1.44.32 2.77.93 3.85.64 1.15 1.08 1.64 1.85 2.42a.5.5 0 0 1-.37.86Zm7.17-1.85c-1.19 0-2.24-.3-3.1-.89-1.49-1.01-2.38-2.65-2.38-4.39a.5.5 0 0 1 1 0c0 1.41.72 2.74 1.94 3.56.71.48 1.54.71 2.54.71.24 0 .64-.03 1.04-.1a.5.5 0 1 1 .17.99c-.57.11-1.07.12-1.21.12ZM14.91 22a.5.5 0 0 1-.13-.02c-1.59-.44-2.63-1.03-3.72-2.1-1.4-1.39-2.17-3.24-2.17-5.22 0-1.62 1.38-2.94 3.08-2.94 1.7 0 3.08 1.32 3.08 2.94 0 1.07.93 1.94 2.08 1.94s2.08-.87 2.08-1.94c0-3.77-3.25-6.83-7.25-6.83-2.84 0-5.44 1.58-6.61 4.03-.39.81-.59 1.76-.59 2.8 0 .78.07 2.01.67 3.61a.5.5 0 1 1-.93.36c-.49-1.31-.73-2.61-.73-3.96 0-1.2.23-2.29.68-3.24 1.33-2.79 4.28-4.6 7.51-4.6 4.55 0 8.25 3.51 8.25 7.83 0 1.62-1.38 2.94-3.08 2.94s-3.08-1.32-3.08-2.94c0-1.07-.93-1.94-2.08-1.94s-2.08.87-2.08 1.94c0 1.71.66 3.31 1.87 4.51.95.94 1.86 1.46 3.27 1.85a.5.5 0 0 1-.12.98Z" />
+          </svg>
+          <span id="abhaBioQualityText"></span>
+        </div>
+        <p class="wizard-hint" style="color:#a15c00;">&#9888; Requires the Mantra RD Service running on this machine with an MFS110 scanner plugged in. This <strong>verifies</strong> the Aadhaar number entered above against the scanned fingerprint &mdash; it does not search for who the fingerprint belongs to.</p>
+        <p class="wizard-hint" style="color:#a15c00;">&#9888; This browser tab must open MEDISYS as <strong>http://localhost:&lt;port&gt;</strong> on the same PC the MFS110 is plugged into.</p>
+        <details class="abha-bio-troubleshoot">
+          <summary>Fingerprint scanner not working? Checklist &#9662;</summary>
+          <ol>
+            <li><strong>Is RD Service installed and running?</strong> Check the Windows system tray for the Mantra RD Service icon, or open <code>http://127.0.0.1:11100/rd/info</code> directly in a browser tab &mdash; it should return XML, not a connection error.</li>
+            <li><strong>Is the MFS110 plugged in?</strong> Check Windows Device Manager for the device listed under a driver-related category with no warning icon.</li>
+            <li><strong>Are you on http://localhost, not a remote/LAN address?</strong> Fingerprint capture only works when the browser and RD Service are on the same machine.</li>
+            <li><strong>Still failing with "Failed to fetch" even though step 1 works?</strong> Ask whoever manages the MEDISYS server to confirm <code>http://127.0.0.1:11100</code> is present in the server's Content-Security-Policy <code>connect-src</code> list (server/server.js) &mdash; a missing entry there blocks every browser identically, with no visible error beyond this generic message.</li>
+          </ol>
+        </details>
+      </div>
+
+      <p class="form-error" id="abhaError" role="alert" aria-live="polite"></p>
+
+      <div id="abhaNotFound" class="abha-fallback" hidden>
+        <p data-i18n="checkin.not_found_hint"><strong>No ABHA found for this identifier.</strong> This patient may not have an ABHA yet. You can search for them by name/phone/UHID below, or start a fresh registration.</p>
+      </div>
+    </div>
+
+    <div id="checkinResultFound" class="portal-card" hidden>
+      <h3 class="abha-fetch-title" data-i18n="checkin.welcome_back">Welcome back</h3>
+      <dl class="wizard-review" id="foundPatientSummary"></dl>
+      <div class="checkin-quick-links">
+        <button type="button" class="wizard-suggest-btn" id="viewRecordBtn" data-i18n="checkin.view_full_record">View Full Record</button>
+        <a class="wizard-suggest-btn" id="addToQueueLink" href="#" data-i18n="checkin.add_to_queue">Add to Today's OPD Queue</a>
+        <a class="wizard-suggest-btn" id="goToBillingLink" href="#" data-i18n="checkin.go_to_billing">Go to Billing</a>
+      </div>
+      <div id="foundPatientRecord" class="checkin-full-record" hidden>
+        <h4 data-i18n="checkin.patient_details">Patient Details</h4>
+        <dl class="wizard-review" id="foundPatientDetails"></dl>
+        <h4 data-i18n="checkin.recent_visits">Recent Visits</h4>
+        <div id="foundPatientVisits"></div>
+      </div>
+    </div>
+
+    <div id="checkinResultNotFound" class="portal-card" hidden>
+      <h3 class="abha-fetch-title" data-i18n="checkin.no_record_title">No existing record for this patient</h3>
+      <p class="wizard-hint" data-i18n="checkin.no_record_hint">Their ABHA details are verified — completing registration with those details pre-filled.</p>
+      <a class="login-btn wizard-next-btn" id="goToRegistrationBtn" href="registration" data-i18n="checkin.complete_registration">Complete Registration</a>
+    </div>
+
+    <h2 class="portal-section-title" data-i18n="checkin.search_manually">Or Search Manually</h2>
+    <div class="portal-card wizard-step">
+      <label for="patientSearch" data-i18n="registration.search_label">Search by name, phone, or UHID</label>
+      <input type="text" id="patientSearch" placeholder="e.g. Ramesh, 98765xxxxx, UH-CHG-000001" data-i18n-placeholder="registration.search_placeholder" />
+      <div id="searchResults" class="staff-roster-grid patient-search-results"></div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-left">
+      <span class="footer-brand">CORE5 <strong>MEDISYS</strong></span>
+      <small>HOSPITAL PORTAL</small>
+    </div>
+    <div class="footer-right">&copy;2026 Core5. All rights reserved.</div>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="../realtime-client.js"></script>
+  <script src="../portal-ui.js"></script>
+  <script src="../rd-service-client.js"></script>
+<script src="patient-checkin.js"></script>
+</body>
+</html>

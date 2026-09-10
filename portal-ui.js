@@ -309,8 +309,11 @@
 
   var ROLE_NAV_ITEMS = {
     receptionist: [
+      { href: '/staff/patient-checkin', icon: 'add_person', label: 'Check-In', i18nKey: 'navigation.checkin' },
+      { href: '/staff/abha-creation', icon: 'registration', label: 'Create ABHA', i18nKey: 'navigation.create_abha' },
       { href: '/staff/registration', icon: 'registration', label: 'Registration', i18nKey: 'navigation.registration' },
       { href: '/staff/opd', icon: 'calendar', label: 'OPD Queue', i18nKey: 'navigation.opd_queue' },
+      { href: '/staff/opd-registrations', icon: 'records', label: 'Registrations', i18nKey: 'navigation.opd_registrations' },
       { href: '/staff/opd-queue-board', icon: 'queue', label: 'Queue', i18nKey: 'navigation.queue_board' },
       { href: '/staff/ipd-admission', icon: 'admission', label: 'Admission', i18nKey: 'navigation.admission' },
     ],

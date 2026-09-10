@@ -794,6 +794,40 @@
   gap: 0 16px;
 }
 
+.wizard-grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+/* Groups a long form (e.g. patient registration) into clearly separated,
+   labeled blocks instead of one flat run of fields — a dashed divider plus
+   a small icon+caps heading per group, echoing .portal-section-title's
+   accent-border treatment but sized for nesting inside a card. */
+.form-section {
+  margin-top: 30px;
+  padding-top: 22px;
+  border-top: 1px dashed var(--line, #dfe6f0);
+}
+
+.form-section:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.form-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 2px;
+  padding-left: 10px;
+  border-left: 3px solid var(--teal);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
 .wizard-hint {
   font-size: 13px;
   color: var(--gray-text);
@@ -868,6 +902,50 @@
   border-top: 1px dashed var(--line, #dfe6f0);
 }
 
+/* Sequential 3-step ABHA verification (Mobile OTP -> Aadhaar OTP ->
+   Fingerprint) — see staff/registration.js / patient-checkin.js. Each step
+   is a numbered block; steps 2 and 3 stay hidden until the previous one
+   succeeds. */
+.abha-step {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line, #dfe6f0);
+}
+
+.abha-step:first-of-type {
+  margin-top: 12px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.abha-step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.abha-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--teal);
+  color: #fff;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.abha-all-verified {
+  margin-top: 20px;
+  font-size: 14px;
+}
+
 .abha-otp-section label {
   font-size: 13px;
   font-weight: 600;
@@ -895,6 +973,234 @@
   border-radius: var(--radius-sm, 8px);
   background: var(--gold-tint, #fdf1dc);
   border: 1px solid var(--gold-light, #f4c95d);
+}
+
+/* Fingerprint capture feedback — see registration.js's showCaptureQuality().
+   Not a preview of the actual print (RD Service returns it pre-encrypted,
+   never a viewable image); just confirms a clean scan happened, using the
+   unencrypted qScore the device reports alongside the encrypted PID block. */
+.abha-bio-capture-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--teal-tint);
+  color: var(--teal-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.abha-bio-capture-result svg {
+  flex-shrink: 0;
+}
+
+.abha-bio-capture-result.quality-fair {
+  background: var(--gold-tint);
+  color: #a15c00;
+}
+
+.abha-bio-capture-result.quality-poor {
+  background: var(--red-tint);
+  color: var(--red);
+}
+
+.abha-bio-troubleshoot {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--line, #dfe6f0);
+  background: var(--navy-tint, #f7f9fb);
+  font-size: 13px;
+  color: var(--gray-text);
+}
+
+.abha-bio-troubleshoot summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.abha-bio-troubleshoot ol {
+  margin: 10px 0 2px;
+  padding-left: 20px;
+}
+
+.abha-bio-troubleshoot li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.abha-bio-troubleshoot code {
+  background: #fff;
+  border: 1px solid var(--line, #dfe6f0);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+/* OPD registrations dashboard (staff/opd-registrations.html) */
+.registrations-summary-line {
+  margin: 0;
+  font-size: 14.5px;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.registrations-filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 20px 0;
+}
+
+.registrations-filter-chip {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #dfe6f0);
+  color: var(--gray-text);
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.registrations-filter-chip:hover {
+  border-color: var(--teal);
+  color: var(--teal-dark);
+}
+
+.registrations-filter-chip[aria-selected="true"] {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+
+.method-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.method-badge-manual {
+  background: var(--navy-tint, #eef1fb);
+  color: var(--gray-text);
+}
+
+.method-badge-mobile_otp {
+  background: var(--teal-tint);
+  color: var(--teal-dark);
+}
+
+.method-badge-aadhaar_otp {
+  background: var(--indigo-tint);
+  color: var(--indigo-dark);
+}
+
+.method-badge-fingerprint {
+  background: var(--gold-tint);
+  color: #a15c00;
+}
+
+.method-badge-all_three {
+  background: var(--coral-tint);
+  color: var(--coral-dark);
+}
+
+/* Patient Check-In (staff/patient-checkin.html) */
+.checkin-quick-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.checkin-quick-links a.wizard-suggest-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.checkin-full-record {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line, #dfe6f0);
+}
+
+.checkin-full-record h4 {
+  color: var(--teal-dark);
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+
+.checkin-full-record h4:first-child {
+  margin-top: 0;
+}
+
+/* Reusable printable-sheet pattern — generalized from staff/billing-desk.html's
+   .invoice-sheet approach (visibility:hidden trick so layout stays intact,
+   only the sheet is shown at print time). Any staff page can give a
+   printable summary block class="print-sheet" and call window.print(); the
+   sheet itself stays `hidden` on screen the rest of the time. See
+   staff/abha-creation.html for the first user of this. */
+.print-sheet {
+  padding: 32px;
+  background: #fff;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-sheet,
+  .print-sheet * {
+    visibility: visible;
+  }
+  .print-sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .print-sheet[hidden] {
+    display: block !important;
+  }
+}
+
+.print-sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--teal);
+}
+
+.print-sheet-header img {
+  height: 56px;
+  width: auto;
+}
+
+.print-sheet-hospital {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--navy);
+}
+
+.print-sheet-subtitle {
+  font-size: 13px;
+  color: var(--gray-text);
+}
+
+.print-sheet-footer {
+  margin-top: 28px;
+  font-size: 11px;
+  color: var(--ink-mute, var(--gray-text));
 }
 
 .abha-fallback p {

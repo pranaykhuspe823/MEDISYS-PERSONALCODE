@@ -9,6 +9,11 @@
 //   ekacare — calls Eka Care's Connect API instead (server/abdmProviders/ekacare.js),
 //             useful while an NHA sandbox approval email is pending
 //
+// Three lookup methods are supported: mobile + OTP, Aadhaar + OTP, and
+// fingerprint (Mantra MFS110 scanner) — the last one verifies a staff-entered
+// Aadhaar number against a captured PID block instead of an OTP, so it's a
+// single one-shot call rather than a request/verify pair.
+//
 // Every provider returns the same normalized shape so the rest of the app
 // never needs to know which one is active:
 //   { abhaNumber, abhaAddress, name, gender, dob, address, mobile }
@@ -101,6 +106,10 @@ async function verifyEnrollmentOtp(txnId, otp, mobile) {
   return callProvider("verifyEnrollmentOtp", txnId, otp, mobile);
 }
 
+async function verifyBio(aadhaarNumber, mobile, pidXml) {
+  return callProvider("verifyBio", aadhaarNumber, mobile, pidXml);
+}
+
 module.exports = {
   isConfigured,
   isMock,
@@ -109,4 +118,5 @@ module.exports = {
   verifyLoginOtp,
   requestEnrollmentOtp,
   verifyEnrollmentOtp,
+  verifyBio,
 };

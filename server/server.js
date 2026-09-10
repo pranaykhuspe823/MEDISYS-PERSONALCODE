@@ -360,6 +360,22 @@ const app = express();
 // — inline style="" attributes are used across ~24 files and a full
 // refactor to remove them isn't worth doing for a much weaker attack
 // primitive than inline script.
+//
+// http://127.0.0.1:11100 (connect-src) is the local Mantra RD Service the
+// fingerprint scanner talks to (staff/registration.js and
+// staff/patient-checkin.js, via rd-service-client.js) — without this, the
+// browser blocks that fetch() before it becomes a network request at all,
+// which surfaces as the exact same generic "Failed to fetch" a real
+// PNA/CORS block would produce. Confirmed via Chrome DevTools Protocol on
+// 2026-09-09: zero Network.requestWillBeSent events fired for the RD
+// Service call — a PNA block would still show the request (then fail it
+// with blockedReason); a CSP connect-src violation blocks it before any
+// network event exists at all, exactly matching what was observed. This
+// had been misdiagnosed as a Chrome Private Network Access issue for a
+// while before catching this — plain HTTP is fine here despite the rest of
+// this directive being HTTPS-only: it's a loopback address, not a mixed-
+// content concern, and RD Service doesn't (and by Aadhaar-compliance
+// design can't) run its own TLS on this port.
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -370,7 +386,14 @@ app.use(
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", "data:", "blob:"],
         mediaSrc: ["'self'", "blob:"],
-        connectSrc: ["'self'", "https://meet.jit.si", "wss://meet.jit.si", "https://checkout.razorpay.com", "https://api.razorpay.com"],
+        connectSrc: [
+          "'self'",
+          "https://meet.jit.si",
+          "wss://meet.jit.si",
+          "https://checkout.razorpay.com",
+          "https://api.razorpay.com",
+          "http://127.0.0.1:11100",
+        ],
         frameSrc: ["https://meet.jit.si", "https://api.razorpay.com", "https://checkout.razorpay.com"],
         objectSrc: ["'none'"],
       },
@@ -1645,6 +1668,60 @@ app.get("/api/patients/search", requireTenantUser, async (req, res) => {
   }
 });
 
+// Patient Check-In (staff/patient-checkin.html): after ABHA verification
+// succeeds (mobile OTP / Aadhaar OTP / fingerprint — all already handled by
+// the existing /api/abha/* routes), resolve whether this person already has
+// a local patient record here — by abha_id first, falling back to phone (a
+// patient may have registered before ABHA linking existed, so their record
+// has no abha_id yet but the same phone number ABDM just returned).
+// Deliberately light: just enough to show a "Welcome back" summary and
+// route staff into the record. Full detail is fetched via the existing
+// GET /api/patients/:uhid and /api/patients/:uhid/history only once staff
+// actually clicks into the record — this call never returns full history.
+app.post("/api/patients/resolve-by-abha", requireReceptionistOrAdmin, async (req, res) => {
+  const { abhaId, abhaAddress, mobile } = req.body || {};
+  if (!abhaId && !mobile) {
+    return res.status(400).json({ success: false, message: "An ABHA ID or mobile number is required." });
+  }
+
+  try {
+    const { hospitalId } = req.session.user;
+    // Correlated subquery for last_visit_at rather than a JOIN + GROUP BY —
+    // this route only ever matches at most one patient row, so there's no
+    // grouping to do; a subquery keeps the main query a plain single-row
+    // lookup exactly like every other patients-table query in this file.
+    const selectSql = `SELECT uhid, full_name, phone, abha_id,
+        (SELECT MAX(v.created_at) FROM opd_visits v WHERE v.patient_uhid = patients.uhid AND v.hospital_id = patients.hospital_id) AS last_visit_at
+       FROM patients WHERE hospital_id = ? AND %COLUMN% = ? LIMIT 1`;
+
+    let rows = [];
+    if (abhaId) {
+      [rows] = await req.db.query(selectSql.replace("%COLUMN%", "abha_id"), [hospitalId, abhaId]);
+    }
+    if (rows.length === 0 && mobile) {
+      [rows] = await req.db.query(selectSql.replace("%COLUMN%", "phone"), [hospitalId, mobile]);
+    }
+
+    if (rows.length === 0) {
+      return res.json({ success: true, found: false, profile: { abhaId, abhaAddress, mobile } });
+    }
+
+    const match = rows[0];
+    res.json({
+      success: true,
+      found: true,
+      uhid: match.uhid,
+      full_name: match.full_name,
+      phone: match.phone,
+      abha_id: match.abha_id,
+      last_visit_at: match.last_visit_at,
+    });
+  } catch (err) {
+    console.error("Resolve patient by ABHA error:", err.message);
+    res.status(500).json({ success: false, message: "Server error. Please try again." });
+  }
+});
+
 app.get("/api/patients/:uhid", requireTenantUser, async (req, res) => {
   // A patient may only ever look up their own record — without this, any logged-in
   // patient could read another patient's full profile by guessing/enumerating UHIDs.
@@ -1719,6 +1796,31 @@ app.patch("/api/patients/:uhid", requireRole("doctor", "receptionist", "hospital
   }
 });
 
+// Lets staff/registration.js's "Suggest" button next to UHID preview what
+// generateUhid() would produce, without actually inserting a patient row.
+// Uses the InnoDB AUTO_INCREMENT counter as a stand-in for "the id the next
+// INSERT would get" — this is a suggestion only (same as the password
+// Suggest button), so a low-probability race with another concurrent
+// registration just means POST /api/patients's own uniqueness check catches
+// it and asks staff to try again, exactly as if they'd typed a taken UHID.
+app.get("/api/patients/next-uhid", requireReceptionistOrAdmin, async (req, res) => {
+  try {
+    const { hospitalId } = req.session.user;
+    const [hospitalRows] = await masterPool.query("SELECT short_code FROM hospitals WHERE id = ? LIMIT 1", [
+      hospitalId,
+    ]);
+    const shortCode = hospitalRows[0]?.short_code || "HOSP";
+
+    const [statusRows] = await req.db.query("SHOW TABLE STATUS LIKE 'patients'");
+    const nextId = statusRows[0]?.Auto_increment || 1;
+
+    res.json({ success: true, uhid: generateUhid(shortCode, nextId) });
+  } catch (err) {
+    console.error("GET /api/patients/next-uhid error:", err);
+    res.status(500).json({ success: false, message: "Could not suggest a UHID. Please try again." });
+  }
+});
+
 app.post("/api/patients", requireReceptionistOrAdmin, async (req, res) => {
   const {
     fullName,
@@ -1732,6 +1834,7 @@ app.post("/api/patients", requireReceptionistOrAdmin, async (req, res) => {
     abhaAddress,
     abhaVerified,
     abhaLinkStatus,
+    abhaVerificationMethod,
     category,
     uhid: customUhid,
     password: customPassword,
@@ -1782,11 +1885,21 @@ app.post("/api/patients", requireReceptionistOrAdmin, async (req, res) => {
       ? abhaLinkStatus
       : null;
 
+    // 'all_three' is staff/registration.js's required sequence (Mobile OTP
+    // -> Aadhaar OTP -> Fingerprint, all three) — the individual single-
+    // method values still exist for staff/patient-checkin.js, which only
+    // ever completes one method before resolving/handing off a patient.
+    const ALLOWED_ABHA_VERIFICATION_METHODS = ["manual", "mobile_otp", "aadhaar_otp", "fingerprint", "all_three"];
+    const verificationMethod = ALLOWED_ABHA_VERIFICATION_METHODS.includes(abhaVerificationMethod)
+      ? abhaVerificationMethod
+      : "manual";
+
     const [result] = await req.db.query(
       `INSERT INTO patients
         (hospital_id, uhid, password_hash, full_name, dob, gender, phone, address, emergency_contact_name,
-         emergency_contact_phone, abha_id, abha_address, abha_verified, abha_link_status, category, registered_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         emergency_contact_phone, abha_id, abha_address, abha_verified, abha_link_status, abha_verification_method,
+         category, registered_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         hospitalId,
         customUhid || null,
@@ -1802,6 +1915,7 @@ app.post("/api/patients", requireReceptionistOrAdmin, async (req, res) => {
         abhaAddress || null,
         abhaVerified ? 1 : 0,
         linkStatus,
+        verificationMethod,
         category || null,
         userId,
       ]
@@ -1887,6 +2001,17 @@ function respondAbdmError(res, err, fallbackMessage) {
   return res.status(502).json({ success: false, providerDown: true, message: fallbackMessage });
 }
 
+// Lets the registration UI check whether the mock ABDM provider is active
+// *before* attempting a fingerprint capture. Every OTP route above already
+// surfaces `mock` on its POST response, but biometric capture happens
+// entirely client-side (talking to the local RD Service) ahead of any POST
+// to this server, so there's no other point where the client would learn
+// this in time to offer a simulated-capture fallback for demoing/testing
+// the biometric flow without real MFS110 hardware.
+app.get("/api/abha/status", requireReceptionistOrAdmin, (req, res) => {
+  res.json({ mock: abdmService.isMock(), provider: abdmService.currentProviderName() });
+});
+
 app.post("/api/abha/request-otp", requireReceptionistOrAdmin, async (req, res) => {
   const { type, value } = req.body || {};
   if (!["mobile", "aadhaar"].includes(type) || !value) {
@@ -1961,6 +2086,38 @@ app.post("/api/abha/enroll/verify-otp", requireReceptionistOrAdmin, async (req, 
     res.json({ success: true, profile });
   } catch (err) {
     respondAbdmError(res, err, "Could not create the ABHA with the provider.");
+  }
+});
+
+// Fingerprint-based ABHA verification (Mantra MFS110 scanner). Looks like a
+// one-shot call from the client's point of view (no OTP box shown here) but
+// per ABDM's own ABHA V3 API Integrator Guide (sandboxcms.abdm.gov.in,
+// section 11.2 "Create ABHA via Biometric"), biometric enrollment actually
+// needs the SAME txnId handshake as the OTP path — abdmProviders/nha.js's
+// verifyBio() makes that hidden first call itself. It also needs a mobile
+// number (ABDM's "primary mobile number" field, same requirement as the
+// Aadhaar-OTP enrollment path) — added 2026-09-09 alongside that fix; a
+// request missing it used to silently drop straight to a confusing generic
+// ABDM rejection instead of this clear 400.
+app.post("/api/abha/verify-bio", requireReceptionistOrAdmin, async (req, res) => {
+  const { aadhaar, mobile, pidXml } = req.body || {};
+  const digits = String(aadhaar || "").replace(/\D/g, "");
+  if (!/^\d{12}$/.test(digits)) {
+    return res.status(400).json({ success: false, message: "Enter a valid 12-digit Aadhaar number." });
+  }
+  const mobileDigits = String(mobile || "").replace(/\D/g, "");
+  if (!/^[6-9]\d{9}$/.test(mobileDigits)) {
+    return res.status(400).json({ success: false, message: "Enter a valid 10-digit mobile number." });
+  }
+  if (typeof pidXml !== "string" || !pidXml.includes("<PidData")) {
+    return res.status(400).json({ success: false, message: "No fingerprint capture data received from the scanner." });
+  }
+
+  try {
+    const profile = await abdmService.verifyBio(digits, mobileDigits, pidXml);
+    res.json({ success: true, profile });
+  } catch (err) {
+    respondAbdmError(res, err, "Could not verify the fingerprint with the ABHA provider.");
   }
 });
 
@@ -2302,6 +2459,58 @@ app.get("/api/opd/queue", requireTenantUser, async (req, res) => {
     res.json({ success: true, queue: rows });
   } catch (err) {
     console.error("Get queue error:", err.message);
+    res.status(500).json({ success: false, message: "Server error. Please try again." });
+  }
+});
+
+// Recent registrations broken down by which ABHA lookup method (if any) was
+// used — lets front-desk leadership see whether fingerprint/OTP adoption is
+// actually happening, not just that the feature exists. See
+// staff/opd-registrations.html + opd-registrations.js.
+const ALLOWED_ABHA_VERIFICATION_METHODS = ["manual", "mobile_otp", "aadhaar_otp", "fingerprint", "all_three"];
+
+app.get("/api/opd/registrations", requireTenantUser, async (req, res) => {
+  const { from, to, method } = req.query;
+  const fromDate = from || todayLocalDateStr();
+  const toDate = to || fromDate;
+
+  if (method && method !== "all" && !ALLOWED_ABHA_VERIFICATION_METHODS.includes(method)) {
+    return res.status(400).json({ success: false, message: "Invalid method filter." });
+  }
+
+  try {
+    const { hospitalId } = req.session.user;
+    let query = `SELECT full_name, uhid, abha_id, abha_address, abha_verification_method, phone, created_at
+                 FROM patients
+                 WHERE hospital_id = ? AND DATE(created_at) BETWEEN ? AND ?`;
+    const params = [hospitalId, fromDate, toDate];
+
+    if (method && method !== "all") {
+      query += " AND abha_verification_method = ?";
+      params.push(method);
+    }
+    query += " ORDER BY created_at DESC";
+
+    const [rows] = await req.db.query(query, params);
+
+    // Summary counts ignore the method filter — the summary strip always
+    // shows the full breakdown for the date range, not just whichever
+    // subset the list is currently filtered to.
+    const [summaryRows] = await req.db.query(
+      `SELECT abha_verification_method AS method, COUNT(*) AS count
+       FROM patients WHERE hospital_id = ? AND DATE(created_at) BETWEEN ? AND ?
+       GROUP BY abha_verification_method`,
+      [hospitalId, fromDate, toDate]
+    );
+    const summary = { total: 0, manual: 0, mobile_otp: 0, aadhaar_otp: 0, fingerprint: 0, all_three: 0 };
+    for (const row of summaryRows) {
+      summary.total += row.count;
+      if (summary[row.method] !== undefined) summary[row.method] = row.count;
+    }
+
+    res.json({ success: true, registrations: rows, summary, from: fromDate, to: toDate });
+  } catch (err) {
+    console.error("Get OPD registrations error:", err.message);
     res.status(500).json({ success: false, message: "Server error. Please try again." });
   }
 });
