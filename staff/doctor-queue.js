@@ -356,6 +356,19 @@
     });
   }
 
+  // Hands-free Patient Recall (Phase 1) — see language/voice-recall-widget.js
+  // and server/voiceQuery.js. Independent of the consultation form above: a
+  // doctor can press-and-hold this any time this page is open, whether or
+  // not a patient is currently selected.
+  function wireVoiceRecall() {
+    if (!window.MedisysVoiceRecall) return;
+    MedisysVoiceRecall.mount(document.getElementById("voiceRecallPanel"), document.getElementById("voiceRecallResult"), {
+      onError: (message) => {
+        document.getElementById("voiceRecallStatus").textContent = message;
+      },
+    });
+  }
+
   // Shared by the "+ Add" button and the medicine dictation mic, so a fully
   // specified voice-dictated medicine is added the same way a manually
   // typed one is — no separate code path to drift out of sync.
@@ -746,6 +759,7 @@
     wireTestOrderWidget();
     wireAddMedButton();
     wireVoiceMics();
+    wireVoiceRecall();
     wirePdfDownload();
     loadQueue();
 

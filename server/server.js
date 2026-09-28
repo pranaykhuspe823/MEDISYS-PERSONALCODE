@@ -28,6 +28,9 @@ const abdmService = require("./abdmService");
 const razorpay = require("./razorpay");
 const importRoutes = require("./importRoutes");
 const { getEntity: getImportEntity } = require("./schemaRegistry");
+const { requirePermission } = require("./security/rbac");
+const { logAccess } = require("./security/auditLog");
+const voiceQuery = require("./voiceQuery");
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "lab-results");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -3276,6 +3279,145 @@ app.post("/api/voice/prescribe", requireRole("doctor"), voiceUpload.single("audi
       success: false,
       message: "Voice dictation service is unreachable. Make sure language/service.py is running (see language/README.md).",
     });
+  }
+});
+
+// Hands-free patient recall (Phase 1: press-and-hold mic on the doctor's own
+// My Queue page — see language/voice-recall-widget.js + staff/doctor-queue.html
+// for the client, voice-recall-stt/ for the free local STT service this
+// calls into via server/voiceQuery.js). requirePermission (not the
+// role-name requireRole used elsewhere in this file) is the new
+// permission-string RBAC layer in server/security/rbac.js — 'doctor' is the
+// only role granted 'patient:read:clinical' today, so this is
+// doctor-only in practice, the same as the spec asked for, but expressed as
+// a permission check rather than a hardcoded role name so it can extend to
+// other roles later without changing this route.
+//
+// Every branch below — resolved, ambiguous, not_found, and the malformed-
+// transcript case — calls logAccess exactly once before responding. Voice is
+// a new entry point into the same patient-data system, not an exception to
+// its audit trail.
+app.post("/api/voice/query", requirePermission("patient:read:clinical"), voiceUpload.single("audio"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: "No audio recorded." });
+  }
+
+  const { hospitalId, userId: doctorUserId, role: actorRole } = req.session.user;
+
+  try {
+    // No language field: voice-recall-stt (Whisper) auto-detects the
+    // spoken language and always translates to English — see
+    // server/voiceQuery.js and voice-recall-stt/service.py.
+    const { transcript, source: sttSource } = await voiceQuery.transcribeAudio(req.file.buffer, req.file.mimetype);
+    const { name, complaint } = voiceQuery.parseNameAndComplaint(transcript);
+
+    if (!name) {
+      await logAccess(req.db, {
+        hospitalId,
+        actorUserId: doctorUserId,
+        actorRole,
+        action: "voice_patient_lookup",
+        resourceType: "patient",
+        outcome: "error",
+        metadata: { reason: "empty_transcript", sttSource },
+        transcript,
+        ipAddress: req.ip,
+      });
+      return res.json({
+        success: true,
+        status: "error",
+        spokenSummary: "I didn't catch a name. Please try again with the patient's name, then their complaint.",
+      });
+    }
+
+    const match = await voiceQuery.matchPatient(req.db, hospitalId, doctorUserId, name);
+
+    if (match.status === "not_found") {
+      await logAccess(req.db, {
+        hospitalId,
+        actorUserId: doctorUserId,
+        actorRole,
+        action: "voice_patient_lookup",
+        resourceType: "patient",
+        outcome: "not_found",
+        metadata: { spokenName: name, complaint, sttSource },
+        transcript,
+        ipAddress: req.ip,
+      });
+      return res.json({
+        success: true,
+        status: "not_found",
+        spokenSummary: `I couldn't find a patient named ${name}.`,
+      });
+    }
+
+    if (match.status === "ambiguous") {
+      await logAccess(req.db, {
+        hospitalId,
+        actorUserId: doctorUserId,
+        actorRole,
+        action: "voice_patient_lookup",
+        resourceType: "patient",
+        outcome: "ambiguous",
+        metadata: { spokenName: name, complaint, sttSource, matchSource: match.source, matchCount: match.matches.length },
+        transcript,
+        ipAddress: req.ip,
+      });
+      return res.json({
+        success: true,
+        status: "ambiguous",
+        matches: match.matches.map((m) => ({ uhid: m.uhid, fullName: m.full_name, dob: m.dob, gender: m.gender })),
+        matchSource: match.source,
+        spokenSummary: voiceQuery.buildAmbiguousSummary(match.matches, name),
+      });
+    }
+
+    // match.status === "resolved" — RBAC already checked by requirePermission
+    // above; this is the actual clinical-data access the audit trail exists
+    // to record.
+    const briefing = await voiceQuery.getPatientBriefing(req.db, hospitalId, match.patient.uhid);
+    const spokenSummary = voiceQuery.buildSpokenSummary(briefing, complaint);
+
+    await logAccess(req.db, {
+      hospitalId,
+      actorUserId: doctorUserId,
+      actorRole,
+      action: "voice_patient_lookup",
+      resourceType: "patient",
+      resourceId: match.patient.uhid,
+      outcome: "success",
+      metadata: { spokenName: name, complaint, sttSource, matchSource: match.source },
+      transcript,
+      ipAddress: req.ip,
+    });
+
+    res.json({
+      success: true,
+      status: "resolved",
+      matchSource: match.source,
+      patient: briefing.patient,
+      recentVisits: briefing.recentVisits,
+      medications: briefing.medications,
+      criticalLabs: briefing.criticalLabs,
+      spokenSummary,
+    });
+  } catch (err) {
+    console.error("Voice query error:", err.message);
+    try {
+      await logAccess(req.db, {
+        hospitalId,
+        actorUserId: doctorUserId,
+        actorRole,
+        action: "voice_patient_lookup",
+        resourceType: "patient",
+        outcome: "error",
+        metadata: { error: err.message },
+        ipAddress: req.ip,
+      });
+    } catch {
+      /* best-effort — the response below is what actually matters here */
+    }
+    res.status(500).json({ success: false, message: "Server error. Please try again." });
   }
 });
 

@@ -1,0 +1,13 @@
+.env
+venv/
+.venv/
+__pycache__/
+*.log
+
+# Downloaded Whisper model weights (several hundred MB) — never commit these,
+# re-downloaded automatically on first run instead. See service.py.
+model_cache/
+
+# Most recent uploaded clip, kept for troubleshooting bad transcriptions —
+# see service.py. Real (if incidental) patient audio; never commit it.
+debug_last_clip.*

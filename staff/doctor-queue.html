@@ -25,6 +25,21 @@
     <h1 data-i18n="navigation.my_queue">My Queue</h1>
     <p class="portal-subtitle">Today's patients.</p>
 
+    <!-- Hands-free Patient Recall (Phase 1: press-and-hold). Prefers a
+         connected Bluetooth earbud for both mic input and the spoken reply
+         when one is available, falling back to the laptop mic/speaker
+         otherwise. Say "name, complaint" — e.g. "Ramesh Kumar, chest pain".
+         See language/voice-recall-widget.js and server/voiceQuery.js. -->
+    <div class="portal-card">
+      <h2 data-i18n="voice_recall.title">🎙️ Patient Recall</h2>
+      <p class="voice-recall-hint-text" data-i18n="voice_recall.instructions">Press and hold the mic, say something like "Give me Ramesh Kumar's details" (or add a complaint — "Ramesh Kumar, chest pain"), then release.</p>
+      <div class="voice-recall-panel" id="voiceRecallPanel">
+        <button type="button" class="voice-recall-btn" id="voiceRecallBtn" aria-label="Press and hold to speak"></button>
+        <span class="voice-recall-status" id="voiceRecallStatus" aria-live="polite"></span>
+      </div>
+      <div class="voice-recall-result" id="voiceRecallResult" hidden></div>
+    </div>
+
     <div class="portal-card">
       <table class="portal-table" id="queueTable">
         <thead><tr><th data-i18n="opd.token">Token</th><th data-i18n="common.patient">Patient</th><th data-i18n="common.time">Time</th><th data-i18n="common.status">Status</th><th></th></tr></thead>
@@ -145,6 +160,7 @@
   <script src="../realtime-client.js"></script>
   <script src="../portal-ui.js"></script>
   <script src="../language/voice-widget.js"></script>
+  <script src="../language/voice-recall-widget.js"></script>
   <script src="../medicine-autocomplete.js"></script>
   <script src="../telemedicine-jitsi.js"></script>
 <script src="doctor-queue.js"></script>

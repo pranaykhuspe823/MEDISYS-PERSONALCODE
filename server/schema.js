@@ -123,6 +123,12 @@ async function ensureSchema(connection, { seedDefaults = true } = {}) {
   await ensureColumn(connection, "patients", "abha_verification_method", "VARCHAR(20) NOT NULL DEFAULT 'manual'");
   // Same import-overflow column as hospitals.extra_fields above.
   await ensureColumn(connection, "patients", "extra_fields", "JSON NULL");
+  // Free-text known-allergy list (e.g. "Penicillin, Sulfa drugs"), read aloud
+  // first — before anything else — by the voice patient-recall briefing (see
+  // server/voiceQuery.js buildSpokenSummary). NULL/empty means "not recorded",
+  // which the briefing says explicitly rather than silently omitting, since a
+  // doctor hearing nothing must not read that as "confirmed no allergies."
+  await ensureColumn(connection, "patients", "allergies", "TEXT NULL");
 
   // ---------- CSV/XLSX data import (hospital admin only — see server/importRoutes.js) ----------
 
@@ -558,6 +564,13 @@ async function ensureSchema(connection, { seedDefaults = true } = {}) {
   );
   await ensureColumn(connection, "lab_orders", "verified_by", "VARCHAR(50) NULL");
   await ensureColumn(connection, "lab_orders", "verified_at", "TIMESTAMP NULL");
+  // Nothing sets these yet — no pathology-side UI exists to flag a result as
+  // critical. Added now so the voice patient-recall briefing (server/voiceQuery.js)
+  // has a real field to read; until pathology gets a "mark critical" control,
+  // this just stays FALSE for every row and the briefing correctly reports no
+  // critical values flagged. Setting one today means a manual UPDATE.
+  await ensureColumn(connection, "lab_orders", "is_critical", "BOOLEAN NOT NULL DEFAULT FALSE");
+  await ensureColumn(connection, "lab_orders", "critical_value_note", "VARCHAR(255) NULL");
 
   // Multiple images per study (radiology). A study can have 0..N uploaded images;
   // legacy single-file result (result_file_path/name) is still used by the pathology flow.
@@ -569,6 +582,34 @@ async function ensureSchema(connection, { seedDefaults = true } = {}) {
       file_path VARCHAR(255) NOT NULL,
       file_name VARCHAR(255) NOT NULL,
       uploaded_by VARCHAR(50) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // General-purpose access audit trail — see server/security/auditLog.js
+  // (logAccess) and server/security/rbac.js (requirePermission), first
+  // adopted by the voice patient-recall feature (POST /api/voice/query) but
+  // written as shared infra any route can call, not a voice-only table.
+  // transcript_encrypted (when present) is AES-256-GCM ciphertext of
+  // whatever raw voice/text input triggered the access, via
+  // server/security/encryption.js — encrypted at rest since a transcript can
+  // itself contain PII (a spoken patient name), decrypted only by a future
+  // admin-side review tool (not built yet). metadata is plain JSON: only
+  // non-sensitive structured facts (match source, permission checked, result
+  // counts) belong there.
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      hospital_id INT NOT NULL,
+      actor_user_id VARCHAR(50) NOT NULL,
+      actor_role VARCHAR(20) NOT NULL,
+      action VARCHAR(50) NOT NULL,
+      resource_type VARCHAR(30) NOT NULL,
+      resource_id VARCHAR(50) NULL,
+      outcome VARCHAR(20) NOT NULL DEFAULT 'success',
+      metadata JSON NULL,
+      transcript_encrypted TEXT NULL,
+      ip_address VARCHAR(45) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
